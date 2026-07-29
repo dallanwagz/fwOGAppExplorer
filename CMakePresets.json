@@ -1,0 +1,52 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "win-msvc-debug",
+      "displayName": "Windows MSVC Debug",
+      "generator": "Ninja",
+      "binaryDir": "build/${presetName}",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "FWOG_REQUIRE_MSVC": "ON" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "win-msvc-release",
+      "displayName": "Windows MSVC Release",
+      "generator": "Ninja",
+      "binaryDir": "build/${presetName}",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "FWOG_REQUIRE_MSVC": "ON" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "linux-gcc-release",
+      "displayName": "Linux GCC Release",
+      "generator": "Ninja",
+      "binaryDir": "build/${presetName}",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    },
+    {
+      "name": "wasm-release",
+      "displayName": "Emscripten Release (UNVERIFIED -- never compiled)",
+      "generator": "Ninja",
+      "binaryDir": "build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "win-msvc-debug",   "configurePreset": "win-msvc-debug" },
+    { "name": "win-msvc-release", "configurePreset": "win-msvc-release" },
+    { "name": "linux-gcc-release","configurePreset": "linux-gcc-release" },
+    { "name": "wasm-release",     "configurePreset": "wasm-release" }
+  ],
+  "testPresets": [
+    { "name": "win-msvc-debug",   "configurePreset": "win-msvc-debug",
+      "output": { "outputOnFailure": true } },
+    { "name": "linux-gcc-release","configurePreset": "linux-gcc-release",
+      "output": { "outputOnFailure": true } }
+  ]
+}

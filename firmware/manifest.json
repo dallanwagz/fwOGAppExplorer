@@ -1,0 +1,103 @@
+{
+  "images": [
+    {
+      "id": "bl_display",
+      "file": "bl_display.uf2",
+      "version": "826de9a-dirty"
+    },
+    {
+      "id": "FreeWiliMain",
+      "file": "FreeWiliMainV92.uf2",
+      "version": "v92"
+    },
+    {
+      "id": "FreeWiliDisplay",
+      "file": "FreeWiliDisplayV67.uf2",
+      "version": "v67"
+    },
+    {
+      "id": "flash_nuke",
+      "file": "flash_nuke.uf2",
+      "version": "pico-flash-nuke"
+    },
+    {
+      "id": "fwog_probe",
+      "file": "../probe/probe.uf2",
+      "version": "002"
+    }
+  ],
+  "entries": [
+    {
+      "slug": "freewili-og-bootloader",
+      "name": "FreeWili 1-OG Display Bootloader",
+      "tagline": "Erases MAIN and installs the wiliOGBsp display serial bootloader.",
+      "description": "Erases the MAIN CPU, then installs the display serial bootloader on the DISPLAY CPU. Do this once per board. MAIN is erased first because a running main app talks continuously on the inter-CPU link, and the DISPLAY bootloader needs MAIN quiet; it also leaves the board wanting an app, which is the next thing to flash. After this, app firmware is embedded in the main UF2 and arrives over the inter-CPU link automatically, so one file flashes both CPUs.",
+      "flashScheme": "DisplayBootloader",
+      "defaultFirmware": true,
+      "version": "826de9a-dirty",
+      "uf2": [
+        {
+          "cpu": "main",
+          "id": "flash_nuke"
+        },
+        {
+          "cpu": "display",
+          "id": "bl_display"
+        }
+      ]
+    },
+    {
+      "slug": "freewili-original-deprecated",
+      "name": "Original FreeWili (deprecated firmware)",
+      "tagline": "The original FreeWili 1 firmware. Does not use the display bootloader.",
+      "description": "Writes the original main and display firmware directly to both CPUs. The DISPLAY CPU is erased first, then written, and the MAIN CPU is written last -- the DISPLAY CPU's bootloader console only enumerates after about 10 seconds of MAIN-CPU silence, so it has to be dealt with before the MAIN CPU starts running this firmware and talking continuously. This REMOVES the display bootloader: returning to FreeWili 1-OG will require reinstalling it from this tab.",
+      "flashScheme": "LegacyDirect",
+      "defaultFirmware": true,
+      "version": "Main v92 / Display v67",
+      "uf2": [
+        {
+          "cpu": "display",
+          "id": "flash_nuke"
+        },
+        {
+          "cpu": "display",
+          "id": "FreeWiliDisplay"
+        },
+        {
+          "cpu": "main",
+          "id": "FreeWiliMain"
+        }
+      ]
+    },
+    {
+      "slug": "erase-main-cpu",
+      "name": "Erase MAIN CPU firmware",
+      "tagline": "Destructive. Wipes the MAIN CPU so the DISPLAY CPU's bootloader console can enumerate.",
+      "description": "Writes the standard Raspberry Pi Pico flash-erase image to the MAIN CPU, destroying its firmware entirely. Only needed when the FreeWili 1-OG display-bootloader install above cannot start because the MAIN CPU is still running and keeps talking on the inter-CPU link -- the DISPLAY CPU's USB console only enumerates after about 10 seconds of MAIN-CPU silence. Not a routine step. Reflash the MAIN CPU afterward from App Explorer or this tab.",
+      "flashScheme": "OgApp",
+      "defaultFirmware": true,
+      "version": "pico-flash-nuke",
+      "uf2": [
+        {
+          "cpu": "main",
+          "id": "flash_nuke"
+        }
+      ]
+    },
+    {
+      "slug": "erase-display-cpu",
+      "name": "Erase DISPLAY CPU firmware",
+      "tagline": "Destructive, and recoverable: an erased RP2040 presents RPI-RP2 by itself.",
+      "description": "Writes the standard Raspberry Pi Pico flash-erase image to the DISPLAY CPU, destroying its firmware entirely -- including the display bootloader, if one is installed. Recoverable without a BOOTSEL button: an RP2040 with blank flash re-enumerates RPI-RP2 unprompted, which is the same property the Original FreeWili install's first step relies on. Reinstall the display bootloader from this tab afterward. DisplayBootloader scheme, so this entry can never reach the MAIN CPU.",
+      "flashScheme": "DisplayBootloader",
+      "defaultFirmware": true,
+      "version": "pico-flash-nuke",
+      "uf2": [
+        {
+          "cpu": "display",
+          "id": "flash_nuke"
+        }
+      ]
+    }
+  ]
+}

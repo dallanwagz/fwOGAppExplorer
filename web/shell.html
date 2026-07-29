@@ -1,0 +1,133 @@
+<!doctype html>
+<!--
+  Emscripten shell for fwOGAppExplorer.
+
+  UNVERIFIED: this file has never been loaded by a browser. No Emscripten SDK
+  exists on the machine it was written on, so the build that consumes it has
+  never run. See web/README.md.
+
+  Two things in here are load-bearing rather than decoration:
+
+  1. `crossOriginIsolated`. The build is compiled and linked with -pthread
+     (see the comment at the top of CMakeLists.txt for why it has to be), so
+     the module needs SharedArrayBuffer, which browsers only hand out to a
+     cross-origin-isolated page. That requires the SERVER to send
+     Cross-Origin-Opener-Policy: same-origin and Cross-Origin-Embedder-Policy:
+     require-corp. Nothing in this file can supply them. The check below turns
+     the otherwise baffling failure that follows ("SharedArrayBuffer is not
+     defined", or a silently blank canvas) into a sentence that says what is
+     wrong and what to do.
+
+  2. The canvas keyboard/context-menu handling. Dear ImGui needs the canvas to
+     take focus for keyboard input to arrive at all, and the browser's own
+     right-click menu would otherwise sit on top of any ImGui context menu.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>FreeWili OG App Explorer</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      background: #0f0f0f; color: #e6e6e6; overflow: hidden;
+      font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    #canvas {
+      display: block; width: 100vw; height: 100vh;
+      border: 0; outline: none; background: #0f0f0f;
+    }
+    /* Overlays sit above the canvas and are removed/hidden once the module
+       reports it is running. */
+    .overlay {
+      position: fixed; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 0.75rem;
+      background: #0f0f0f; text-align: center; padding: 2rem;
+    }
+    .overlay h1 { font-size: 1.1rem; font-weight: 600; margin: 0; }
+    .overlay p  { max-width: 46rem; line-height: 1.5; margin: 0; color: #a8a8a8; }
+    .overlay code {
+      font-family: ui-monospace, "Fira Code", Consolas, monospace;
+      background: #1c1c1c; padding: 0.1rem 0.35rem; border-radius: 3px; color: #d8d8d8;
+    }
+    #error h1 { color: #f25a5a; }
+    #status { font-size: 0.9rem; color: #a8a8a8; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+
+  <div id="loading" class="overlay">
+    <h1>FreeWili OG App Explorer</h1>
+    <p id="status">Loading&hellip;</p>
+  </div>
+
+  <div id="error" class="overlay" hidden>
+    <h1>This page cannot start here</h1>
+    <p id="errorText"></p>
+  </div>
+
+  <script>
+    (function () {
+      var canvas    = document.getElementById('canvas');
+      var loading   = document.getElementById('loading');
+      var status    = document.getElementById('status');
+      var errorBox  = document.getElementById('error');
+      var errorText = document.getElementById('errorText');
+
+      function fail(message) {
+        loading.hidden = true;
+        errorBox.hidden = false;
+        errorText.innerHTML = message;
+      }
+
+      // See note 1 at the top of this file. Checked BEFORE the module script
+      // runs, so the message a user actually sees names the real problem
+      // rather than whatever SharedArrayBuffer error surfaces downstream.
+      if (!self.crossOriginIsolated) {
+        fail(
+          'This build uses threads, so the page must be served <em>cross-origin isolated</em>. ' +
+          'The server needs to send both of these headers:<br><br>' +
+          '<code>Cross-Origin-Opener-Policy: same-origin</code><br>' +
+          '<code>Cross-Origin-Embedder-Policy: require-corp</code><br><br>' +
+          'Python’s <code>python -m http.server</code> does <strong>not</strong> send them. ' +
+          'See <code>web/README.md</code> in the repository for a server that does.'
+        );
+        return;
+      }
+
+      window.Module = {
+        canvas: canvas,
+        print:      function (text) { console.log(text); },
+        printErr:   function (text) { console.error(text); },
+        setStatus:  function (text) {
+          if (!text) { loading.hidden = true; return; }
+          status.textContent = text;
+        },
+        onRuntimeInitialized: function () {
+          loading.hidden = true;
+          // Dear ImGui gets no keyboard events until the canvas has focus.
+          canvas.focus();
+        },
+        // Emscripten calls this instead of throwing past us for fatal errors.
+        onAbort: function (what) {
+          fail('The application stopped: <code>' + String(what) + '</code>. ' +
+               'The browser console has the details.');
+        }
+      };
+
+      // A WebGL context loss would otherwise take the page down silently.
+      canvas.addEventListener('webglcontextlost', function (e) {
+        e.preventDefault();
+        fail('The graphics context was lost. Reload the page to start again.');
+      }, false);
+
+      canvas.addEventListener('click', function () { canvas.focus(); }, false);
+    })();
+  </script>
+
+  {{{ SCRIPT }}}
+</body>
+</html>

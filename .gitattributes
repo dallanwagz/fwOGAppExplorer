@@ -1,0 +1,22 @@
+# probe.uf2 is the one binary this repository tracks. Marked explicitly so no
+# line-ending heuristic can ever touch it: its SHA-256 is recorded in
+# src/flash/fwCpuProbe.h and checked both at configure time
+# (cmake/ProbeProvenance.cmake) and at run time before the image is written to a
+# board, so a single byte changed in transit is a build failure, not a subtle
+# one.
+probe/probe.uf2 binary
+# The application icon, copied from fwcom. Binary for the same reason: it must
+# never be line-ending-normalised or diffed as text.
+resources/product.ico binary
+# Images: the README screenshot and the recovery bitmap. Same reason again.
+assets/*.png binary
+resources/*.bmp binary
+
+# The two files whose CONTENT hashes gate that image no longer live here: the
+# prober's source is wiliOGBsp's apps/cpuprobe, and this repository holds only
+# the built artefact above. There is therefore nothing to pin for them here --
+# they are pinned, if at all, by that repository's own .gitattributes.
+#
+# cmake/ProbeProvenance.cmake normalises CRLF to LF before hashing them anyway,
+# precisely so that a line-ending conversion on either side cannot fail this
+# build. Only probe.uf2 is hashed byte-for-byte, and only it needs the marking.

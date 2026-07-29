@@ -1,0 +1,18 @@
+// The application icon: the FreeWili orca, copied byte-for-byte from fwcom's
+// product.ico (freewilimain/testprojects/fwcom/product.ico) so this app and
+// fwcom present the same product to the user rather than two near-identical
+// drawings that drift apart.
+//
+// This one line is the whole of the icon wiring -- there is deliberately no
+// runtime SDL_SetWindowIcon() call to go with it. SDL3 enumerates RT_GROUP_ICON
+// and adopts the FIRST icon in the executable as the window class icon
+// ("Use the first icon as a default icon, like in the Explorer",
+// SDL_RegisterApp in SDL_windowsevents.c), so linking this resource sets the
+// title-bar, Alt-Tab, taskbar AND Explorer icons at once. Adding a second icon
+// resource to this executable would make "the first one" ambiguous; keep it to
+// this one.
+//
+// The numeric ID matters for that reason too: an unquoted identifier the RC
+// compiler cannot resolve to a number becomes a NAMED resource, and named
+// resources sort after numeric ones. 1 keeps this unambiguously first.
+1 ICON "product.ico"
