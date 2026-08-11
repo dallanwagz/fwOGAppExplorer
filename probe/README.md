@@ -10,9 +10,22 @@ It prints `main` or `display` over USB CDC, once per second, forever.
 
 Built from wiliOGBsp commit **`330ded5ecd2f83ea1a3e6d5cc1d16e3e58d38f34`**.
 
-**Status: UNVERIFIED ON HARDWARE.** This image has been statically verified in
-full (below) and has never been written to a board. See
-`docs/hardware-verification.md`.
+**Status: VERIFIED ON HARDWARE (MAIN CPU, Linux).** This image has been
+statically verified in full (below), and has now also been written to a real
+FreeWili 1-OG and run. Written twice by `fwog::copyToVolume()` on Linux to
+MAIN's `RPI-RP2` volume, it was accepted by the bootrom, rebooted, enumerated as
+`2e8a:000a "FWOG probe 002"` on MAIN's own hub port carrying MAIN's serial
+(`E463A8574B251838`), and printed `main` on its CDC — read back through
+`fwog::readSerialLine()` and accepted by `fwog::parseProbeLine()` as
+`ProbeAnswer::Main`. It then honoured the 1200-baud touch back into BOOTSEL, and
+MAIN was restored to `FreeWiliMainV92.uf2`.
+
+Two things this does NOT cover, and neither should be read as verified: the
+image has never run on the **DISPLAY** CPU (the destructive work was
+deliberately confined to MAIN, which has a physical BOOTSEL button as a human
+fallback), and the CC1101 probe was therefore only ever observed returning the
+MAIN answer — a `display` answer from this image has not been seen on hardware.
+See `docs/hardware-verification.md`.
 
 ## Why this exists
 
@@ -312,9 +325,13 @@ back is the 1200-baud touch, not a timer.
 
 All statically verified against
 `wiliOGBsp/build/apps/cpuprobe/cpuprobe.elf` / `.dis`, freshly derived for this
-binary. **The firmware has never been flashed.** The previous version's evidence
-does not carry over — linking BSP code made it stale, so it was redone from
-scratch.
+binary. The previous version's evidence does not carry over — linking BSP code
+made it stale, so it was redone from scratch.
+
+The static evidence below is what licensed the FIRST write. It has since been
+flashed and run on MAIN (see Status, above), so the static analysis is no longer
+the only thing standing behind this image on that CPU — but it is still the only
+thing standing behind it on DISPLAY.
 
 ### The build-date pin (`330ded5`) changed no instruction
 
