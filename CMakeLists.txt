@@ -98,9 +98,25 @@ endif()
 # The part of "no dependencies, one exe" that these flags do NOT deliver, said
 # plainly rather than left for someone to discover from an ldd on a user's
 # machine: libudev.so.1 is a hard, direct dependency of the executable. It
-# comes from freewili-finder, it is not something this file can flag away, and
-# whether it wants a static libudev, a dlopen, or simply documenting as a
-# prerequisite is a packaging decision that has not been made.
+# comes from freewili-finder and it is not something this file can flag away.
+#
+# THAT PACKAGING DECISION HAS NOW BEEN MADE: leave it dynamic, and document it.
+# There is no libudev.a to link against (the systemd package ships only the
+# shared library, and `pkg-config --libs --static libudev` answers `-ludev`), so
+# a static libudev would mean building systemd from source to build this app;
+# libudev is LGPL-2.1-or-later, and static linking carries a relink obligation
+# that a single shipped executable cannot satisfy on its own; and the third
+# option -- replacing freewili-finder's libudev use with direct sysfs reads --
+# is a rewrite of an upstream library's platform backend, which would fork the
+# finder this app shares with the rest of the FreeWili tooling. README.md's
+# "The dependency truth" states the result to users, including the display
+# libraries SDL3 dlopens that never appear in DT_NEEDED at all.
+#
+# Note also what this executable's DT_NEEDED does NOT bound: the glibc symbol
+# versions it requires. Measured here, the floor is GLIBC_2.43, and it is a
+# property of the BUILD MACHINE's glibc rather than of this source -- so a
+# release build belongs on the oldest distribution it is meant to run on. See
+# README.md, "Will the binary run on another machine?".
 if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         add_link_options(-static-libstdc++ -static-libgcc)

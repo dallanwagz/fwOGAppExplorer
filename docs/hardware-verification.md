@@ -1,17 +1,32 @@
 # Hardware verification — FreeWili OG App Explorer
 
-Status at handoff: **detection verified on real hardware; no firmware write
-has been performed.** The CPU prober has since been **rebuilt against the
-board's own BSP after failing on hardware, and is itself awaiting hardware
-verification** — see its section below.
+Status: **the display-bootloader install, `LegacyDirect`, and the CPU prober
+have all been run against a physical board on Linux.** Detection was verified
+earlier on Windows. What has *not* been run is the everyday App Explorer
+`OgApp` path — there is still no known-good OG app UF2 on this machine.
 
-This document records what was confirmed against a physical board, and gives
-the remaining steps as a checklist ready to run. It is deliberately explicit
-about what was *not* done and why.
+**HOW TO READ THIS DOCUMENT.** It is written in the order things happened, and
+that order matters more than usual here, because the later work overturned some
+of the earlier work's stated limits. Sections 1 through "CPU prober" record the
+**Windows pass**, when no write had been authorised; "Identification on Linux"
+records a **later Linux pass in which writes were authorised and performed**.
+Where the two disagree the Linux section is the current state, and every
+superseded claim above it now says so at the point of the claim rather than
+leaving a reader to notice the contradiction on their own. Nothing has been
+deleted: what a pass believed at the time is part of the record.
 
 ---
 
-## Why the flash steps were not run
+## Why the flash steps were not run *in the Windows pass*
+
+> **Superseded by the Linux pass**, in which DISPLAY writes were authorised and
+> performed: `bl_display.uf2` (the bootloader install) and
+> `FreeWiliDisplayV67.uf2` (the `LegacyDirect` restore) both reached the DISPLAY
+> CPU. What did *not* happen even then is a standalone `flash_nuke` to DISPLAY —
+> on that run `dropRedundantErases()` removed the erase step. This section is
+> kept because it is the reasoning that held while the images below were the
+> only ones available, and because the risk it describes did not go away when
+> the authorisation changed.
 
 The remaining steps write firmware to a physical board. Running them
 unattended was the wrong call, for a reason that is about the images
@@ -78,14 +93,18 @@ socket rather than a board.
 
 ---
 
-## ☐ Step 2 — `DisplayBootloader` on a board that already has one
+## ✅ Step 2 — `DisplayBootloader` — DONE, on Linux
 
-**NOT AUTHORISED in this pass — this writes to the DISPLAY CPU.**
+**Was NOT AUTHORISED in the Windows pass — this writes to the DISPLAY CPU.**
 
-Listed here only for completeness of the original plan. Skip it unless you
-have separately decided to accept DISPLAY-write risk. Note the owner has
-confirmed that re-running a bootloader install on a board that already has
-one is safe and idempotent.
+It has since been run end to end on Linux and it succeeded: see
+"`DisplayBootloader` install, end to end" below for the plan, the timings and
+the USB identity the board came back with. What that run does **not** settle is
+this step as originally written — a re-run on a board that *already* has a
+bootloader. The write-up below does not record what DISPLAY was holding
+beforehand, so whether that run was idempotent-over-a-bootloader or a first
+install cannot be read back out of it. The owner has confirmed the re-run is
+safe; confirmation is not a measurement.
 
 ---
 
@@ -115,15 +134,32 @@ expect it.
 
 ## ☐ Step 4 — Refusals (mostly non-destructive; run these)
 
-These test that the app declines to act. Steps 4a and 4b write nothing.
+These test that the app declines to act. Step 4a writes nothing.
+
+**⚠ 4b DOES WRITE. Do not run it expecting a refusal.** This entry said the
+opposite until the Linux pass measured it, and a tester who trusted the old
+wording would have got a real write to a real CPU while believing nothing could
+happen. What changed is not the checklist's honesty but the engine: two mounted
+`RPI-RP2` volumes are no longer indistinguishable, because hub position
+identifies both of them. `classifyVolumes()` resolves that case *before* the
+ambiguity check ever runs — see its own comment, "the case this whole file was
+built around as unresolvable, resolves" — `test_fwVolumeState.cpp:172` pins it,
+and the Linux run recorded further down this document measured exactly that:
+`RPI-RP21` → MAIN and `RPI-RP2` → DISPLAY, cross-checked against
+`/sys/block/sd*`.
 
 - **4a. Unplug mid-plan.** Start a flash, pull the cable partway through.
   Expect a failure message that names exactly which steps completed. Confirm
   it does not claim success.
-- **4b. Both CPUs in BOOTSEL by hand.** Two `RPI-RP2` volumes mount. Expect
-  a **refusal**, not a copy — the two volumes are genuinely
-  indistinguishable, so guessing is never acceptable. Confirm the message
-  links to the Recovery tab.
+- **4b. Both CPUs in BOOTSEL by hand. THIS WRITES.** Two `RPI-RP2` volumes
+  mount. On a FreeWili — where both CPUs sit on the board's own internal hub —
+  expect the app to identify each volume by hub position and **write
+  immediately, with no prober and no prompt**. That is correct behaviour, not a
+  missing guard: guessing is what is forbidden, and hub position is not a guess.
+  The refusal path still exists and is what you get when the identity is
+  genuinely absent — two bootrom volumes with no hub identity behind them, which
+  a single FreeWili cannot produce.
+  Confirm the write lands on the CPU the hub says it should.
 - **4c. One CPU in BOOTSEL by hand.** Expect the typed-confirmation prompt
   to appear. Type a wrong answer and confirm it is rejected. (Typing the
   correct answer *will* proceed to a write — stop before that unless you
@@ -131,9 +167,16 @@ These test that the app declines to act. Steps 4a and 4b write nothing.
 
 ---
 
-## ☐ Step 5 — `LegacyDirect` (LAST, and destructive)
+## ✅ Step 5 — `LegacyDirect` (LAST, and destructive) — DONE, on Linux
 
 **Reordered after a real hardware failure — see below before running it.**
+
+Run to `Success` on Linux as the restore between phases; see "`LegacyDirect`
+also verified on Linux" below. One caveat that section carries and this one
+must not lose: on that run `dropRedundantErases()` removed the leading DISPLAY
+erase, because DISPLAY was already in its bootrom. **The erase-then-write-the-
+same-CPU race described at the end of this document was therefore not
+exercised.** The plan shape was verified; the hardest step in it was skipped.
 
 The plan is now three steps, and the order is enforced by
 `buildFlashPlan()` rather than by the manifest's array position:
@@ -199,10 +242,20 @@ firmware, so only run this when you have a replacement image to hand.
 
 ## ☐ Erase DISPLAY — AWAITING HARDWARE VERIFICATION
 
-**Status: shipped; never written to a board by this action.** The same
-`flash_nuke.uf2` has been written to the DISPLAY CPU on real hardware as step 1
-of the `LegacyDirect` plan, so the image and the CPU are not new to each other;
-what is new is reaching it from a standalone entry.
+**Status: shipped; never written to a board by this action.**
+
+An earlier draft softened that by saying `flash_nuke.uf2` had already reached
+the DISPLAY CPU as step 1 of the `LegacyDirect` plan, so the image and the CPU
+were "not new to each other". **That reassurance does not survive checking.**
+The one `LegacyDirect` run written up in this document is the Linux one, and on
+that run `dropRedundantErases()` *removed* the DISPLAY erase because that CPU
+was already in its bootrom — so it is not evidence that `flash_nuke` has ever
+run on DISPLAY. No run recorded here erased the DISPLAY CPU.
+
+So both halves are new: reaching it from a standalone entry, and the erase
+itself. The safety argument below stands on the RP2040's documented behaviour
+and on the erase-then-reappear property the Linux pass *did* observe on MAIN —
+not on a DISPLAY precedent, because there is not one.
 
 The `erase-display-cpu` action writes `flash_nuke.uf2` to DISPLAY. It is
 DISPLAY-only by the same two independent mechanisms, mirrored: the
@@ -229,9 +282,12 @@ does not, stop: that is the one outcome this action's safety argument rests on.
 
 ---
 
-## ☐ CPU prober (`probe/probe.uf2`) — REBUILT, AWAITING HARDWARE VERIFICATION
+## ✅ CPU prober (`probe/probe.uf2`) — REBUILT, AND SINCE VERIFIED ON HARDWARE
 
-**Status: rebuilt against the board's own BSP; never written to a board.**
+**Status: rebuilt against the board's own BSP after failing on hardware, then
+run on a real CPU during the Linux pass and answered correctly.** The
+static-only verification below was written before that run and is left as it
+was; the checklist it ends with is now scored against the run, item by item.
 
 ### What happened the first time
 
@@ -283,24 +339,37 @@ Statically verified (this is the entire verification budget — no hardware):
   an activity-LED mask of 0, so it drives no pin either;
 - reproducible: three independent build trees give byte-identical `.bin`/`.uf2`.
 
-**NOT established — this is the checklist item that remains open:**
+**The checklist, scored against the Linux run** (the run itself is written up
+under "The CPU prober's first DISPLAY answer" below):
 
-- [ ] The image **boots on real silicon**. This is the specific thing the
-      previous version failed at, and no static check can substitute for it.
-      The root cause above is a well-supported inference from the board headers
-      and the boot2 byte diff, **not a measurement**.
-- [ ] It **enumerates a USB CDC port** and holds it (the previous version never
-      did).
-- [ ] It prints `main` or `display`, once per second, and keeps doing so.
-- [ ] The answer is **correct** on a known CPU — flash it to a CPU whose
-      identity is already known and confirm the word matches.
-- [ ] The **1200-baud touch** actually returns it to BOOTSEL.
+- [x] The image **boots on real silicon**. This is the specific thing the
+      previous version failed at. It re-enumerated as `2E8A:000A` — a PID the
+      failed image never reached, which stayed at the bootrom's `2E8A:0003`
+      throughout. The boot2 `PICO_FLASH_SPI_CLKDIV` inference above is still an
+      inference about the *cause*; that the rebuilt image boots is now measured.
+- [x] It **enumerates a USB CDC port** and holds it, on the right hub port and
+      carrying that CPU's own serial.
+- [ ] It prints `main` or `display`, **once per second, and keeps doing so.**
+      Only the first answer was read — that is all `CpuProbeController` needs,
+      so nothing watched for the second. The repetition remains unverified.
+- [x] The answer is **correct** on a known CPU. It said `display` on the CPU
+      hub position independently placed at `3-4.1.2`.
+- [x] The **1200-baud touch** returns it to BOOTSEL — the flow closed as a
+      round trip.
 
-Suggested first run, on **MAIN only**, because MAIN has a reachable BOOTSEL
-button and DISPLAY has none: put MAIN in BOOTSEL by hand, copy `probe.uf2` to
-the single `RPI-RP2` volume, and watch for a new COM port saying `main`. Do not
-exercise this on DISPLAY, and do not use the two-volumes-mounted flow, until
-the single-CPU case is confirmed.
+**The suggested first run was on MAIN, and that is not what happened.** The
+advice below was written to keep the first exercise on the CPU with a reachable
+BOOTSEL button; the Linux pass instead ran it on **DISPLAY**, from the
+two-volumes-mounted flow, which is the more exposed of the two cases in both
+respects. It worked, and the 1200-baud touch brought that CPU back. The advice
+is kept because it was the right advice for an unproven image, and because it is
+still the right first step for anyone rebuilding the prober:
+
+> Put MAIN in BOOTSEL by hand, copy `probe.uf2` to the single `RPI-RP2` volume,
+> and watch for a new port saying `main`.
+
+What is still **not** established for the prober: any run on **MAIN**. Every
+observation of this image booting comes from one CPU, and it is the other one.
 
 ---
 
@@ -454,22 +523,25 @@ the "~10 s of MAIN silence" rule is about.
 
 ## Not verified anywhere
 
-- **Linux** — the identification, probe and flash paths are now verified against
-  hardware; see the section above. Still unexercised there: the App Explorer
-  `OgApp` flash path (no known-good OG app UF2 on this machine), and the remote
-  catalog's `dlopen` of libcurl in the libcurl-absent configuration.
-- **Linux, before this pass** — compiled and unit-tested, **never exercised
-  against hardware.**
-  The `linux-gcc-release` preset builds warning-clean and `ctest` is green (515
-  cases / 2058 assertions), and the POSIX branches of `fwPaths.cpp` and
-  `fwSerialPorts.cpp` have been compiled and run on that machine — each states
-  in its own file comment exactly what was observed and what was not. Nothing
-  in the checklist above has been repeated there: no `RPI-RP2` volume has been
-  discovered, no 1200-baud touch performed, no UF2 written, and the app itself
-  has never been launched on Linux. The remote catalog `dlopen`s libcurl rather
-  than link-depending on it, and neither the libcurl-present nor the
-  libcurl-absent path has been run; the absent one needs a container without it
-  to test honestly.
+- **Linux** — the identification, probe and flash paths are verified against
+  hardware; see the section above. `ctest --preset linux-gcc-release` is green
+  at **551 cases / 2170 assertions**, warning-clean at `-Wall -Wextra`. The one
+  path still unexercised on Linux is the App Explorer **`OgApp` flash** — the
+  everyday one — because there is still no known-good OG app UF2 on this
+  machine. Both halves of the remote catalog's libcurl `dlopen` *have* been run,
+  including the libcurl-absent half, forced under a mount namespace with the
+  sonames made unresolvable; `fwHttp.cpp`'s own VERIFICATION STATUS block lists
+  exactly what was exercised and what was not.
+- **Linux, and what the app looks like** — the app has been launched and driven
+  on Linux, but only on a private `Xvfb` display, because the machine's owner is
+  on a Wayland session that must not be disturbed. So the X11 path is exercised
+  and the **Wayland path is not**: no window has been mapped on a real
+  compositor. See README.md, "What is and is not verified on Linux".
+- **Linux, as it stood before the hardware pass** — kept as a record of what was
+  once claimed, not as a current statement. At that point the preset compiled
+  and unit-tested only: no `RPI-RP2` volume discovered, no 1200-baud touch
+  performed, no UF2 written, and the app never launched. Every line of that has
+  since been overtaken by the section above.
 - **Emscripten / web** — never compiled, by explicit decision. See
   `web/README.md` for what a person with emsdk should try first, including
   the COOP/COEP headers `-pthread` requires.

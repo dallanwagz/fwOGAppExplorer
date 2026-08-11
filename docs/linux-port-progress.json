@@ -1,8 +1,8 @@
 {
   "subtitle": "Builder/critic loop against the verified Windows build",
   "branch": "linux-support",
-  "updated": "2026-08-11 03:50",
-  "phase": "C4 \u2014 fwVolume (first real write to the board)",
+  "updated": "2026-08-11 07:10",
+  "phase": "Complete \u2014 all 10 components passed",
   "components": [
     {
       "id": "C1",
@@ -32,9 +32,9 @@
       "id": "C4",
       "name": "fwVolume (Linux)",
       "bar": "RPI-RP2 discovery incl. not-auto-mounted case; write verified + flushed",
-      "status": "building",
-      "rounds": 0,
-      "note": "RPI-RP2 auto-mounts via udisks2 2.27-2.40s after RP2 Boot enumerates."
+      "status": "passed",
+      "rounds": 2,
+      "note": "PASS round 2. Unflushed write, a directory accepted as a board, and a volume-collision miss."
     },
     {
       "id": "C5",
@@ -64,9 +64,9 @@
       "id": "C8",
       "name": "Device identification",
       "bar": "MAIN vs DISPLAY resolved via hub port location on real hardware",
-      "status": "pending",
-      "rounds": 0,
-      "note": ""
+      "status": "passed",
+      "rounds": 1,
+      "note": "PASS. Product string was wrong on Linux, so a board WITH the bootloader read as Missing."
     },
     {
       "id": "C9",
@@ -80,9 +80,9 @@
       "id": "C10",
       "name": "Packaging & docs",
       "bar": "udev rules, single-binary check, README, hardware-verification.md",
-      "status": "pending",
-      "rounds": 0,
-      "note": "Inherited follow-up: fwVolumeState.h:114 cites nonexistent GuardAction::WriteByElimination"
+      "status": "passed",
+      "rounds": 1,
+      "note": "PASS. libudev is a real dependency; README now states link-time and dlopen truth."
     }
   ],
   "metrics": [
@@ -115,13 +115,6 @@
       "note": "-static-libstdc++ confirmed on 7 link lines"
     },
     {
-      "metric": "Shared lib deps",
-      "baseline": "unverified",
-      "current": "4",
-      "target": "minimal",
-      "note": "libudev, libm, libc, ld-linux. libgcc_s only transitively via libudev"
-    },
-    {
       "metric": "Binary size (stripped)",
       "baseline": "n/a",
       "current": "9,343,880 B",
@@ -143,20 +136,6 @@
       "note": "both embed steps hash inputs every build instead of trusting mtimes"
     },
     {
-      "metric": "Shared lib deps",
-      "baseline": "unverified",
-      "current": "4",
-      "target": "see C10",
-      "note": "libudev.so.1 is a hard DT_NEEDED -- 'one exe, no dependencies' not yet true on Linux"
-    },
-    {
-      "metric": "Tests",
-      "baseline": "466/494 (28 fail)",
-      "current": "524 / 2096 assn",
-      "target": "all green",
-      "note": "board-free: zero device state changes while running"
-    },
-    {
       "metric": "App on Linux",
       "baseline": "never launched",
       "current": "runs, renders, detects board",
@@ -169,6 +148,34 @@
       "current": "works, both CPUs",
       "target": "works",
       "note": "incl. DISPLAY, which has no BOOTSEL button"
+    },
+    {
+      "metric": "Tests",
+      "baseline": "466/494 (28 fail)",
+      "current": "551 / 2170 assn",
+      "target": "all green",
+      "note": "board-free and network-free; +57 cases over baseline"
+    },
+    {
+      "metric": "Runtime deps",
+      "baseline": "claimed \"none\"",
+      "current": "1 linked + dlopen set",
+      "target": "stated truthfully",
+      "note": "libudev.so.1 linked; SDL3 and libcurl dlopened. README now says both."
+    },
+    {
+      "metric": "glibc floor",
+      "baseline": "unknown",
+      "current": "2.43",
+      "target": "documented",
+      "note": "a property of the build machine, not the source"
+    },
+    {
+      "metric": "Display bootloader",
+      "baseline": "never flashed on Linux",
+      "current": "installed",
+      "target": "installed",
+      "note": "end to end via FlashController; DISPLAY reads FWOG display bl 001"
     }
   ],
   "log": [
@@ -301,6 +308,31 @@
       "t": "03:48",
       "who": "C6 critic",
       "msg": "PASS. Reproduced every negative control; proved it works even from a hostile termios state."
+    },
+    {
+      "t": "04:40",
+      "who": "C4 critic",
+      "msg": "FAIL then PASS: the notice was added to a function with no call sites."
+    },
+    {
+      "t": "05:50",
+      "who": "C8 builder",
+      "msg": "ACCEPTANCE TEST PASSED: display bootloader installed end to end, 2/2 in 7.7s."
+    },
+    {
+      "t": "06:20",
+      "who": "C8 critic",
+      "msg": "FAIL: a doc claimed no shipping plan erases-then-writes one CPU. One does, on DISPLAY."
+    },
+    {
+      "t": "07:05",
+      "who": "final integration",
+      "msg": "FAIL: Step 4b told testers 'writes nothing' for a state that now writes. Fixed."
+    },
+    {
+      "t": "07:10",
+      "who": "orchestrator",
+      "msg": "All 10 components passed. Opening PR."
     }
   ]
 }

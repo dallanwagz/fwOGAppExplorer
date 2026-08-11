@@ -89,8 +89,13 @@ enum class AutoIdentify {
 /// one erased CPU each also produce two volumes, and the prober's answer would
 /// then say nothing whatsoever about the other board's drive. That is the one
 /// precondition the identification flow itself cannot check -- identifyCpus()
-/// sees volumes and ports, not boards -- so it is checked here, the same rule
-/// and the same reason as identifyDisabledReason() (fwTabRecovery.cpp).
+/// sees volumes and ports, not boards -- so it is checked here.
+///
+/// It is checked ONLY here, which is new. The Recovery tab used to enforce the
+/// same rule separately, in identifyDisabledReason(); that function and the
+/// panel it gated were deleted, and this one is now the single place the
+/// board count is turned into a refusal. Two copies of a safety rule is one
+/// copy too many to keep in step.
 ///
 /// Note what is deliberately NOT an input: whether flashing is otherwise
 /// allowed. This answers only "does the app need to identify the CPUs first",

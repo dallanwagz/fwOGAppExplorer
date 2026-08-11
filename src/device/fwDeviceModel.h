@@ -138,10 +138,10 @@ public:
     ///
     /// Applied only when EXACTLY ONE device is connected. The identification is
     /// derived by elimination across one board's two CPUs (see
-    /// identifyDisabledReason(), fwTabRecovery.cpp, which refuses to start with
-    /// more than one board attached for that reason), so attaching it to a
-    /// second board's identity would be attaching it to a board it says nothing
-    /// about.
+    /// autoIdentifyDecision(), fwTabDefaultFirmwareLogic.cpp, which answers
+    /// Blocked with more than one board attached for that same reason), so
+    /// attaching it to a second board's identity would be attaching it to a
+    /// board it says nothing about.
     void setVerifiedVolume(VerifiedVolume verified);
 
     /// Pulls the latest scan result, flattens it into devices(), and leaves

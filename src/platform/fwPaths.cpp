@@ -269,7 +269,7 @@ std::filesystem::path exeDir()
     //     folder" button, whose file:/// URL needs an absolute path to mean
     //     anything.
     //   * An error channel would have to ripple through userDataDir() below
-    //     and through catalogDir(), whose own four users -- fwApp.cpp:589 and
+    //     and through catalogDir(), whose own four users -- fwApp.cpp:602 and
     //     fwTabAppExplorer.cpp:253, 257 and 260 -- would each then have to
     //     handle it, all of them treating this as infallible today, in order
     //     to describe a state the app cannot proceed usefully in anyway.
