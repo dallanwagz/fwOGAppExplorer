@@ -86,12 +86,21 @@ endif()
 # placed here, before the first FetchContent_MakeAvailable() below, for exactly
 # that reason.
 #
-# UNVERIFIED: Linux has never been compiled for this project -- there is no
-# Linux toolchain on the machine this was written on, and the linux-gcc-release
-# preset has never been configured, let alone built. This is written from the
-# documented behaviour of the flags. Same status as the Emscripten paths above,
-# flagged for the same reason: a promise with no implementation is worse than
-# an implementation that says plainly it has not been run.
+# RUN, no longer merely written. The linux-gcc-release preset configures,
+# builds and links on GCC 16.1.1 / glibc 2.44, these two flags reach all 7 link
+# lines, and `readelf -d` on the two executables it produces reports DT_NEEDED
+# as exactly libudev.so.1, libm.so.6, libc.so.6 and ld-linux-x86-64.so.2 --
+# neither libstdc++.so.6 nor libgcc_s.so.1 is there. (libgcc_s.so.1 is still
+# mapped at run time; ldd shows it arriving as libudev's dependency, not this
+# executable's.) Unlike the Emscripten paths above, this block is no longer a
+# promise with no implementation behind it.
+#
+# The part of "no dependencies, one exe" that these flags do NOT deliver, said
+# plainly rather than left for someone to discover from an ldd on a user's
+# machine: libudev.so.1 is a hard, direct dependency of the executable. It
+# comes from freewili-finder, it is not something this file can flag away, and
+# whether it wants a static libudev, a dlopen, or simply documenting as a
+# prerequisite is a packaging decision that has not been made.
 if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         add_link_options(-static-libstdc++ -static-libgcc)

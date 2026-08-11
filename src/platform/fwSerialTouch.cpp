@@ -8,6 +8,21 @@
   #include <unistd.h>
 #endif
 
+// UNVERIFIED ON LINUX. The POSIX branch of touchPort1200() below compiles and
+// links -- the linux-gcc-release preset builds it warning-clean -- and it has
+// not been run. Nothing in this tree records a 1200-baud touch having been
+// performed on Linux. It is not a branch anyone can exercise casually:
+// succeeding means rebooting the CPU on the other end into its bootloader.
+// (docs/linux-port-progress.json tracks that work; this comment deliberately
+// does not restate its status, only what this file's own branch has done.)
+//
+// This note is here rather than anywhere else because the sentence that used to
+// carry it was in fwSerialPorts.cpp -- "same status as the other POSIX branches
+// in this project (see fwSerialTouch.cpp, fwVolume.cpp)" -- and it went away
+// when THAT file's Linux branch was measured and rewrote its own header. A
+// status recorded only in a neighbour's file disappears the moment the
+// neighbour's status changes, so each branch now states its own.
+
 namespace fwog {
 
 void touchPort1200(const std::string& port)

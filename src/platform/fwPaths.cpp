@@ -16,12 +16,17 @@
 
 // VERIFIED ON LINUX -- and what was OBSERVED, not merely which cases were
 // tried. x86-64, GCC 16.1.1, glibc 2.44, kernel 6.18.43, 4 KiB pages,
-// PATH_MAX 4096. The POSIX branch below is no longer in the "UNVERIFIED: no
-// Linux toolchain exists on the machine this was written on" state that
-// fwSerialPorts.cpp still carries: it has been compiled and RUN, by a
+// PATH_MAX 4096. The POSIX branch below has been compiled and RUN, by a
 // throwaway probe linked against this very library (so it exercised the
 // shipped code, not a re-typed copy of it) plus the cases in
 // tests/test_fwPaths.cpp. Where the outcome is a WRONG answer, it says so.
+//
+// This paragraph used to add that fwSerialPorts.cpp "still carries" the
+// unverified state this file had just left. That is no longer true -- its
+// Linux branch has since been measured against an attached board -- and the
+// sentence went stale without anything failing. Each file states its own
+// verification status and nothing here restates another file's; that is the
+// point of removing it rather than merely correcting it.
 //
 //   * Four invocation styles: absolute path, through a symlink living in a
 //     DIFFERENT directory, by relative path from a different working

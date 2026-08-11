@@ -10,6 +10,20 @@
   #include <windows.h>
 #endif
 
+// UNVERIFIED ON LINUX, in the part that talks to the machine. detail::
+// unescapeMount() below is pure and is covered by tests/test_fwVolume.cpp on
+// every platform; findRpiRp2Volumes()'s /proc/mounts branch and copyToVolume()'s
+// std::filesystem path compile and link warning-clean on the linux-gcc-release
+// preset and have not been run. Nothing in this tree records an RPI-RP2 volume
+// having been discovered or written on Linux. (docs/linux-port-progress.json
+// tracks that work; this comment deliberately does not restate its status,
+// only what this file's own branches have done.)
+//
+// Recorded here for the same reason as the equivalent note in fwSerialTouch.cpp:
+// the one sentence that used to flag both of these files lived in
+// fwSerialPorts.cpp and went away when that file's own Linux branch was
+// measured. Each branch states its own status now.
+
 namespace fwog {
 namespace detail {
 

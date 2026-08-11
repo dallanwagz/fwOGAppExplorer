@@ -140,8 +140,14 @@ with the MSVC environment loaded (the "x64 Native Tools Command Prompt") — the
 preset fails loudly rather than silently falling back to a GCC on `PATH`.
 
 Presets: `win-msvc-debug`, `win-msvc-release`, `linux-gcc-release`,
-`wasm-release`. **Only the two MSVC presets are verified.** The Linux and
-Emscripten presets are written but have never been configured or built — see
+`wasm-release`.
+
+The two MSVC presets are the verified ones, and they are the only ones that
+have been run against a board. `linux-gcc-release` **configures, builds and
+passes its tests** — warning-clean at `-Wall -Wextra` for this project's own
+sources, `ctest --preset linux-gcc-release` green. That is a build claim and
+nothing more: no Linux run has touched a device, and the app has not been
+launched there. `wasm-release` has still never been configured or built — see
 [`web/README.md`](web/README.md), which is explicit about what that means.
 
 ### Tests

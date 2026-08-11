@@ -220,6 +220,36 @@
       "t": "01:05",
       "who": "orchestrator",
       "msg": "Removed all kernel-internals claims rather than guess a third time. C3 committed."
+    },
+    {
+      "t": "01:20",
+      "who": "integration",
+      "msg": "Cross-check of C1-C5: 6 file:line citations verified, all still correct."
+    },
+    {
+      "t": "01:20",
+      "who": "integration",
+      "msg": "4 'Linux never compiled' claims now false (README, web/README, CMakeLists, hardware-verification) — fixed."
+    },
+    {
+      "t": "01:20",
+      "who": "integration",
+      "msg": "fwPaths.cpp header still said fwSerialPorts.cpp 'still carries' UNVERIFIED; C5 fixed one cite in that file and missed this one."
+    },
+    {
+      "t": "01:20",
+      "who": "integration",
+      "msg": "C5 deleted the only marker flagging fwSerialTouch/fwVolume as unverified. Restored, per-file, without touching their code."
+    },
+    {
+      "t": "01:20",
+      "who": "integration",
+      "msg": "EmbedResources unified with EmbedFirmware: reproduced the stale-mtime hole on board-recovery.bmp, then the fix. Idle build 71 ms."
+    },
+    {
+      "t": "01:20",
+      "who": "integration",
+      "msg": "Re-measured after changes: 66 TUs recompiled, 0 warnings, ctest 1/1, 515 cases / 2058 assertions. Metrics table above still reads 503/503."
     }
   ]
 }

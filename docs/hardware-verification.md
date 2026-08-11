@@ -297,9 +297,17 @@ the single-CPU case is confirmed.
 
 ## Not verified anywhere
 
-- **Linux** — never compiled. The design `dlopen`s libcurl rather than
-  link-depending on it; the "libcurl absent" path needs a container without
-  it to test honestly.
+- **Linux** — compiled and unit-tested, **never exercised against hardware.**
+  The `linux-gcc-release` preset builds warning-clean and `ctest` is green (515
+  cases / 2058 assertions), and the POSIX branches of `fwPaths.cpp` and
+  `fwSerialPorts.cpp` have been compiled and run on that machine — each states
+  in its own file comment exactly what was observed and what was not. Nothing
+  in the checklist above has been repeated there: no `RPI-RP2` volume has been
+  discovered, no 1200-baud touch performed, no UF2 written, and the app itself
+  has never been launched on Linux. The remote catalog `dlopen`s libcurl rather
+  than link-depending on it, and neither the libcurl-present nor the
+  libcurl-absent path has been run; the absent one needs a container without it
+  to test honestly.
 - **Emscripten / web** — never compiled, by explicit decision. See
   `web/README.md` for what a person with emsdk should try first, including
   the COOP/COEP headers `-pthread` requires.
