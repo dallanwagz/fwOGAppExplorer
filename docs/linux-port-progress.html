@@ -20,7 +20,7 @@
   .track { height:10px; background:#21262d; border-radius:99px; overflow:hidden;
             margin:.6rem 0 .4rem; }
   .fill { height:100%; background:linear-gradient(90deg,#10b981,#58a6ff);
-           width:20%; transition:width .4s; }
+           width:30%; transition:width .4s; }
   .counts { display:flex; justify-content:space-between; font-size:.85rem;
              color:var(--dim); }
   table { width:100%; border-collapse:collapse; background:var(--panel);
@@ -58,13 +58,13 @@
 <h1>fwOGAppExplorer &mdash; Linux port</h1>
 <p class="sub">Builder/critic loop against the verified Windows build &middot; branch
   <code>linux-support</code> &middot; updated
-  2026-08-10 23:30</p>
+  2026-08-11 01:05</p>
 
 <div class="progress">
-  <strong>2 of 10 components passed</strong>
+  <strong>3 of 10 components passed</strong>
   <div class="track"><div class="fill"></div></div>
-  <div class="counts"><span>20% complete</span>
-    <span>C3 — fwPaths (POSIX)</span></div>
+  <div class="counts"><span>30% complete</span>
+    <span>C5 — fwSerialPorts (the largest known gap)</span></div>
 </div>
 
 <h2>Components</h2>
@@ -92,9 +92,9 @@
           <td class="id">C3</td>
           <td class="name">fwPaths (POSIX)
             <div class="bar">/proc/self/exe matches GetModuleFileName semantics</div></td>
-          <td><span class="pill" style="--c:#3b82f6">Builder</span></td>
-          <td class="num">&mdash;</td>
-          <td class="note"></td>
+          <td><span class="pill" style="--c:#10b981">Passed</span></td>
+          <td class="num">3</td>
+          <td class="note">PASS. 3 silently-wrong POSIX defects fixed. Rounds 1-2 failed on overclaiming comments.</td>
         </tr>
         <tr>
           <td class="id">C4</td>
@@ -108,7 +108,7 @@
           <td class="id">C5</td>
           <td class="name">fwSerialPorts (Linux)
             <div class="bar">usbId populated from /sys, parity with Windows SetupAPI path</div></td>
-          <td><span class="pill" style="--c:#6b7280">Pending</span></td>
+          <td><span class="pill" style="--c:#3b82f6">Builder</span></td>
           <td class="num">&mdash;</td>
           <td class="note">Largest known gap — usbId is currently left empty by design</td>
         </tr>
@@ -202,13 +202,6 @@
           <td class="note">unstripped 10,556,488 B</td>
         </tr>
         <tr>
-          <td class="name">Tests</td>
-          <td class="num">466/494 (28 fail)</td>
-          <td class="num">494/494</td>
-          <td class="num">494/494</td>
-          <td class="note">1943 assertions; stable across randomized orderings</td>
-        </tr>
-        <tr>
           <td class="name">Embedded images</td>
           <td class="num">1 (probe only)</td>
           <td class="num">5 img / 4 entries</td>
@@ -221,11 +214,18 @@
           <td class="num">74 ms</td>
           <td class="num">&lt;100 ms</td>
           <td class="note">embed step now always runs, hash short-circuits; no recompile or relink</td>
+        </tr>
+        <tr>
+          <td class="name">Tests</td>
+          <td class="num">466/494 (28 fail)</td>
+          <td class="num">503/503</td>
+          <td class="num">all green</td>
+          <td class="note">+9 POSIX cases; each fails if its fix is reverted</td>
         </tr></tbody>
 </table>
 
 <h2>Activity</h2>
-<ul class="log"><li><span class="ts">23:30</span><span class="who">C2 critic</span><span class="msg">PASS round 3. Reproduced the hard case; verified ninja edge ordering and every doc claim.</span></li><li><span class="ts">23:28</span><span class="who">C2 builder</span><span class="msg">Embed now runs every build, hashing inputs itself. probe.uf2 covered too.</span></li><li><span class="ts">23:12</span><span class="who">C2 critic</span><span class="msg">FAIL round 2: hash stamp only recomputes at configure time; 3 more doc errors.</span></li><li><span class="ts">23:00</span><span class="who">C2 critic</span><span class="msg">FAIL round 1: flash_nuke provenance prose factually wrong; found mtime stale-embed hole.</span></li><li><span class="ts">22:45</span><span class="who">C2 builder</span><span class="msg">Confirmed all 28 failures were firmware absence, none Linux-specific. Sourced payloads.</span></li><li><span class="ts">22:20</span><span class="who">C1 critic</span><span class="msg">PASS. Verified all 7 claims; confirmed fresh-clone patch through a real FetchContent populate.</span></li><li><span class="ts">22:18</span><span class="who">C1 builder</span><span class="msg">Patched fwfinder &lt;functional&gt;; fixed 10 real warnings incl. 9 unreported in test_fwCpuIdentify.</span></li><li><span class="ts">21:52</span><span class="who">orchestrator</span><span class="msg">Design approved. Branch linux-support created; 10 components defined.</span></li><li><span class="ts">21:44</span><span class="who">orchestrator</span><span class="msg">Hardware confirmed present: 093c:2054 Main v87 + 093c:2055 Display v67 on /dev/ttyACM0-1.</span></li><li><span class="ts">21:42</span><span class="who">orchestrator</span><span class="msg">Baseline measured: configure clean, build fails at 113/559 in upstream fwfinder.</span></li></ul>
+<ul class="log"><li><span class="ts">01:05</span><span class="who">orchestrator</span><span class="msg">Removed all kernel-internals claims rather than guess a third time. C3 committed.</span></li><li><span class="ts">00:55</span><span class="who">C3 critic</span><span class="msg">FAIL round 3: kernel-history claim wrong (v5.18, not v4.15) — proved from tagged sources.</span></li><li><span class="ts">00:40</span><span class="who">C3 critic</span><span class="msg">FAIL round 2: 3 false comments incl. an invented header guarantee.</span></li><li><span class="ts">00:10</span><span class="who">C3 critic</span><span class="msg">FAIL round 1: AT_EXECFN tier speculative; comment claimed it covered a case it cannot.</span></li><li><span class="ts">23:30</span><span class="who">C2 critic</span><span class="msg">PASS round 3. Reproduced the hard case; verified ninja edge ordering and every doc claim.</span></li><li><span class="ts">23:28</span><span class="who">C2 builder</span><span class="msg">Embed now runs every build, hashing inputs itself. probe.uf2 covered too.</span></li><li><span class="ts">23:12</span><span class="who">C2 critic</span><span class="msg">FAIL round 2: hash stamp only recomputes at configure time; 3 more doc errors.</span></li><li><span class="ts">23:00</span><span class="who">C2 critic</span><span class="msg">FAIL round 1: flash_nuke provenance prose factually wrong; found mtime stale-embed hole.</span></li><li><span class="ts">22:45</span><span class="who">C2 builder</span><span class="msg">Confirmed all 28 failures were firmware absence, none Linux-specific. Sourced payloads.</span></li><li><span class="ts">22:20</span><span class="who">C1 critic</span><span class="msg">PASS. Verified all 7 claims; confirmed fresh-clone patch through a real FetchContent populate.</span></li><li><span class="ts">22:18</span><span class="who">C1 builder</span><span class="msg">Patched fwfinder &lt;functional&gt;; fixed 10 real warnings incl. 9 unreported in test_fwCpuIdentify.</span></li><li><span class="ts">21:52</span><span class="who">orchestrator</span><span class="msg">Design approved. Branch linux-support created; 10 components defined.</span></li><li><span class="ts">21:44</span><span class="who">orchestrator</span><span class="msg">Hardware confirmed present: 093c:2054 Main v87 + 093c:2055 Display v67 on /dev/ttyACM0-1.</span></li><li><span class="ts">21:42</span><span class="who">orchestrator</span><span class="msg">Baseline measured: configure clean, build fails at 113/559 in upstream fwfinder.</span></li></ul>
 
 <footer>Auto-refreshes every 30s. Generated by
   <code>tools/gen_progress.py</code> from
