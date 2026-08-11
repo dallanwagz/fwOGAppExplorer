@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="30">
+<title>fwOGAppExplorer — Linux port progress</title>
+<style>
+  :root { color-scheme: dark; --bg:#0d1117; --panel:#161b22; --line:#30363d;
+           --fg:#e6edf3; --dim:#8b949e; --accent:#58a6ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:2rem 1.25rem 4rem; background:var(--bg); color:var(--fg);
+          font:15px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size:1.5rem; margin:0 0 .25rem; }
+  h2 { font-size:1.05rem; margin:2.5rem 0 .75rem; color:var(--accent);
+        text-transform:uppercase; letter-spacing:.06em; }
+  .sub { color:var(--dim); margin:0 0 1.5rem; font-size:.9rem; }
+  .progress { background:var(--panel); border:1px solid var(--line);
+               border-radius:10px; padding:1rem 1.25rem; }
+  .track { height:10px; background:#21262d; border-radius:99px; overflow:hidden;
+            margin:.6rem 0 .4rem; }
+  .fill { height:100%; background:linear-gradient(90deg,#10b981,#58a6ff);
+           width:0%; transition:width .4s; }
+  .counts { display:flex; justify-content:space-between; font-size:.85rem;
+             color:var(--dim); }
+  table { width:100%; border-collapse:collapse; background:var(--panel);
+           border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  th { text-align:left; font-size:.72rem; text-transform:uppercase;
+        letter-spacing:.07em; color:var(--dim); font-weight:600;
+        padding:.7rem .9rem; border-bottom:1px solid var(--line); }
+  td { padding:.7rem .9rem; border-bottom:1px solid var(--line);
+        vertical-align:top; }
+  tr:last-child td { border-bottom:none; }
+  .id { font-family:ui-monospace,monospace; color:var(--dim); width:3.2rem; }
+  .name { font-weight:600; }
+  .bar { font-weight:400; color:var(--dim); font-size:.82rem; margin-top:.2rem; }
+  .num { font-family:ui-monospace,monospace; text-align:right;
+          white-space:nowrap; }
+  .note { color:var(--dim); font-size:.86rem; }
+  .empty { color:var(--dim); font-style:italic; }
+  .pill { display:inline-block; padding:.15rem .55rem; border-radius:99px;
+           font-size:.75rem; font-weight:600; white-space:nowrap;
+           color:var(--c); border:1px solid var(--c);
+           background:color-mix(in srgb, var(--c) 14%, transparent); }
+  ul.log { list-style:none; margin:0; padding:0; background:var(--panel);
+            border:1px solid var(--line); border-radius:10px; }
+  ul.log li { display:flex; gap:.9rem; padding:.55rem .9rem;
+               border-bottom:1px solid var(--line); font-size:.87rem; }
+  ul.log li:last-child { border-bottom:none; }
+  .ts { font-family:ui-monospace,monospace; color:var(--dim);
+         white-space:nowrap; }
+  .who { color:var(--accent); min-width:7rem; }
+  .msg { flex:1; }
+  footer { margin-top:2.5rem; color:var(--dim); font-size:.8rem; }
+  @media (max-width:720px) { .bar,.note { display:none; } }
+</style></head><body><div class="wrap">
+
+<h1>fwOGAppExplorer &mdash; Linux port</h1>
+<p class="sub">Builder/critic loop against the verified Windows build &middot; branch
+  <code>linux-support</code> &middot; updated
+  2026-08-10 21:55</p>
+
+<div class="progress">
+  <strong>0 of 10 components passed</strong>
+  <div class="track"><div class="fill"></div></div>
+  <div class="counts"><span>0% complete</span>
+    <span>C1 — build &amp; toolchain</span></div>
+</div>
+
+<h2>Components</h2>
+<table>
+  <thead><tr><th>#</th><th>Component / bar</th><th>Status</th>
+    <th class="num">Rounds</th><th>Latest finding</th></tr></thead>
+  <tbody>
+        <tr>
+          <td class="id">C1</td>
+          <td class="name">Build &amp; toolchain
+            <div class="bar">Warning-clean at -Wall -Wextra, as MSVC is at /W4</div></td>
+          <td><span class="pill" style="--c:#3b82f6">Builder</span></td>
+          <td class="num">&mdash;</td>
+          <td class="note">Baseline: build fails at 113/559 — fwfinder_linux.cpp missing &lt;functional&gt;</td>
+        </tr>
+        <tr>
+          <td class="id">C2</td>
+          <td class="name">Test suite
+            <div class="bar">Full ctest green, same case count as Windows</div></td>
+          <td><span class="pill" style="--c:#6b7280">Pending</span></td>
+          <td class="num">&mdash;</td>
+          <td class="note"></td>
+        </tr>
+        <tr>
+          <td class="id">C3</td>
+          <td class="name">fwPaths (POSIX)
+            <div class="bar">/proc/self/exe matches GetModuleFileName semantics</div></td>
+          <td><span class="pill" style="--c:#6b7280">Pending</span></td>
+          <td class="num">&mdash;</td>
+          <td class="note"></td>
+        </tr>
+        <tr>
+          <td class="id">C4</td>
+          <td class="name">fwVolume (Linux)
+            <div class="bar">RPI-RP2 discovery incl. not-auto-mounted case; write verified + flushed</div></td>
+          <td><span class="pill" style="--c:#6b7280">Pending</span></td>
+          <td class="num">&mdash;</td>
+          <td class="note"></td>
+        </tr>
+        <tr>
+          <td class="id">C5</td>
+          <td class="name">fwSerialPorts (Linux)
+            <div class="bar">usbId populated from /sys, parity with Windows SetupAPI path</div></td>
+          <td><span class="pill" style="--c:#6b7280">Pending</span></td>
+          <td class="num">&mdash;</td>
+          <td class="note">Largest known gap — usbId is currently left empty by design</td>
+        </tr>
+        <tr>
+          <td class="id">C6</td>
+          <td class="name">fwSerialTouch (Linux)
+            <div class="bar">1200-baud touch drops a CPU into BOOTSEL on the real board</div></td>
+          <td><span class="pill" style="--c:#6b7280">Pending</span></td>
+          <td class="num">&mdash;</td>
+          <td class="note"></td>
+        </tr>
+        <tr>
+          <td class="id">C7</td>
+          <td class="name">fwHttp (Linux)
+            <div class="bar">dlopen libcurl remote-catalog fetch succeeds</div></td>
+          <td><span class="pill" style="--c:#6b7280">Pending</span></td>
+          <td class="num">&mdash;</td>
+          <td class="note"></td>
+        </tr>
+        <tr>
+          <td class="id">C8</td>
+          <td class="name">Device identification
+            <div class="bar">MAIN vs DISPLAY resolved via hub port location on real hardware</div></td>
+          <td><span class="pill" style="--c:#6b7280">Pending</span></td>
+          <td class="num">&mdash;</td>
+          <td class="note"></td>
+        </tr>
+        <tr>
+          <td class="id">C9</td>
+          <td class="name">UI / rendering
+            <div class="bar">Renders under Xvfb; window icon, DPI, window-state restore</div></td>
+          <td><span class="pill" style="--c:#6b7280">Pending</span></td>
+          <td class="num">&mdash;</td>
+          <td class="note"></td>
+        </tr>
+        <tr>
+          <td class="id">C10</td>
+          <td class="name">Packaging &amp; docs
+            <div class="bar">udev rules, single-binary check, README, hardware-verification.md</div></td>
+          <td><span class="pill" style="--c:#6b7280">Pending</span></td>
+          <td class="num">&mdash;</td>
+          <td class="note"></td>
+        </tr></tbody>
+</table>
+
+<h2>Measurements</h2>
+<table>
+  <thead><tr><th>Metric</th><th class="num">Baseline</th>
+    <th class="num">Current</th><th class="num">Bar</th><th>Note</th></tr></thead>
+  <tbody>
+        <tr>
+          <td class="name">Configure</td>
+          <td class="num">clean</td>
+          <td class="num">clean</td>
+          <td class="num">clean</td>
+          <td class="note">SDL3 detects wayland + x11 + vulkan</td>
+        </tr>
+        <tr>
+          <td class="name">Build result</td>
+          <td class="num">FAIL 113/559</td>
+          <td class="num">FAIL 113/559</td>
+          <td class="num">559/559</td>
+          <td class="note">fwfinder_linux.cpp missing &lt;functional&gt;</td>
+        </tr>
+        <tr>
+          <td class="name">Warnings (our code)</td>
+          <td class="num">1</td>
+          <td class="num">1</td>
+          <td class="num">0</td>
+          <td class="note">fwVolumeState.cpp:70 unused parameter</td>
+        </tr></tbody>
+</table>
+
+<h2>Activity</h2>
+<ul class="log"><li><span class="ts">21:52</span><span class="who">orchestrator</span><span class="msg">Design approved. Branch linux-support created; 10 components defined.</span></li><li><span class="ts">21:44</span><span class="who">orchestrator</span><span class="msg">Hardware confirmed present: 093c:2054 Main v87 + 093c:2055 Display v67 on /dev/ttyACM0-1.</span></li><li><span class="ts">21:42</span><span class="who">orchestrator</span><span class="msg">Baseline measured: configure clean, build fails at 113/559 in upstream fwfinder.</span></li></ul>
+
+<footer>Auto-refreshes every 30s. Generated by
+  <code>tools/gen_progress.py</code> from
+  <code>docs/linux-port-progress.json</code>.</footer>
+</div></body></html>
