@@ -1,8 +1,8 @@
 {
   "subtitle": "Builder/critic loop against the verified Windows build",
   "branch": "linux-support",
-  "updated": "2026-08-11 01:05",
-  "phase": "C5 \u2014 fwSerialPorts (the largest known gap)",
+  "updated": "2026-08-11 02:35",
+  "phase": "C7 \u2014 fwHttp (round 2)",
   "components": [
     {
       "id": "C1",
@@ -40,9 +40,9 @@
       "id": "C5",
       "name": "fwSerialPorts (Linux)",
       "bar": "usbId populated from /sys, parity with Windows SetupAPI path",
-      "status": "building",
-      "rounds": 0,
-      "note": "Largest known gap \u2014 usbId is currently left empty by design"
+      "status": "passed",
+      "rounds": 1,
+      "note": "PASS round 1. usbId derived from /sys and verified on the real board."
     },
     {
       "id": "C6",
@@ -56,9 +56,9 @@
       "id": "C7",
       "name": "fwHttp (Linux)",
       "bar": "dlopen libcurl remote-catalog fetch succeeds",
-      "status": "pending",
-      "rounds": 0,
-      "note": ""
+      "status": "building",
+      "rounds": 1,
+      "note": "Round 1 found a bad_alloc process abort and an https->http redirect downgrade."
     },
     {
       "id": "C8",
@@ -136,18 +136,25 @@
       "note": "all manifest entries survive; no silent drops"
     },
     {
-      "metric": "Idle build",
-      "baseline": "ninja: no work",
-      "current": "74 ms",
-      "target": "<100 ms",
-      "note": "embed step now always runs, hash short-circuits; no recompile or relink"
-    },
-    {
       "metric": "Tests",
       "baseline": "466/494 (28 fail)",
-      "current": "503/503",
+      "current": "517/2063 assn",
       "target": "all green",
-      "note": "+9 POSIX cases; each fails if its fix is reverted"
+      "note": "green with network, without network, and with libcurl unloadable"
+    },
+    {
+      "metric": "Idle build",
+      "baseline": "n/a",
+      "current": "71 ms",
+      "target": "<100 ms",
+      "note": "both embed steps hash inputs every build instead of trusting mtimes"
+    },
+    {
+      "metric": "Shared lib deps",
+      "baseline": "unverified",
+      "current": "4",
+      "target": "see C10",
+      "note": "libudev.so.1 is a hard DT_NEEDED -- 'one exe, no dependencies' not yet true on Linux"
     }
   ],
   "log": [
@@ -229,7 +236,7 @@
     {
       "t": "01:20",
       "who": "integration",
-      "msg": "4 'Linux never compiled' claims now false (README, web/README, CMakeLists, hardware-verification) — fixed."
+      "msg": "4 'Linux never compiled' claims now false (README, web/README, CMakeLists, hardware-verification) \u2014 fixed."
     },
     {
       "t": "01:20",
@@ -250,6 +257,21 @@
       "t": "01:20",
       "who": "integration",
       "msg": "Re-measured after changes: 66 TUs recompiled, 0 warnings, ctest 1/1, 515 cases / 2058 assertions. Metrics table above still reads 503/503."
+    },
+    {
+      "t": "01:40",
+      "who": "C5 critic",
+      "msg": "PASS. Reproduced usbId on real hardware; 0 regressions across 3.1M predicate inputs."
+    },
+    {
+      "t": "02:05",
+      "who": "integration",
+      "msg": "Corrected 4 'Linux never built' claims; unified EmbedResources with C2's hashing; found libudev dependency."
+    },
+    {
+      "t": "02:35",
+      "who": "C7 builder",
+      "msg": "libcurl: writeCb bad_alloc aborted the process; redirects unbounded and could downgrade https to http."
     }
   ]
 }
