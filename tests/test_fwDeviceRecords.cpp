@@ -1,5 +1,11 @@
 #include <doctest/doctest.h>
+#include <system_error>
+#include <fstream>
+#include <filesystem>
 #include "device/fwDeviceRecords.h"
+#include "device/fwCpuIdentify.h"
+
+#include <map>
 
 using namespace fwog;
 
@@ -94,4 +100,139 @@ TEST_CASE("fromFwfinder maps every Fw::USBDeviceType to its matching UsbKind") {
     CHECK(fromFwfinder(Fw::USBDeviceType::FTDI)          == UsbKind::FTDI);
     CHECK(fromFwfinder(Fw::USBDeviceType::Other)         == UsbKind::Other);
 }
+
+// --------------------------------------------------------------------------
+// productFromSysfs: CpuPortRecord::product has to be the USB PRODUCT STRING.
+//
+// fwfinder hands out a display name, not a product string, and the two differ
+// on Linux and macOS (manufacturer prepended) but not on Windows. Every case
+// below is about one of those two shapes; the real strings are the ones the
+// attached board and firmware/bl_display.uf2 actually publish.
+// --------------------------------------------------------------------------
+
+namespace {
+// A reader over a fixed table, so these stay pure -- no /sys, no board.
+detail::ReadFileFn readerFor(std::map<std::string, std::string> files)
+{
+    return [files = std::move(files)](const std::string& path) -> std::optional<std::string> {
+        const auto it = files.find(path);
+        if (it == files.end()) return std::nullopt;
+        return it->second;
+    };
+}
+} // namespace
+
+TEST_CASE("productFromSysfs prefers the kernel's product string over fwfinder's display name") {
+    // The exact strings measured on the attached board: fwfinder's Linux branch
+    // reports manufacturer + " " + product, and /sys/.../product is the
+    // descriptor verbatim.
+    const auto read = readerFor({ { "/sys/devices/x/3-4.1.1/product", "MainCPU v92\n" } });
+    CHECK(detail::productFromSysfs("/sys/devices/x/3-4.1.1", "FreeWili MainCPU v92", read)
+          == "MainCPU v92");
+}
+
+TEST_CASE("productFromSysfs strips the newline sysfs attributes carry") {
+    // The prefix tests downstream are exact, so a stray "\n" would only matter
+    // for a SUFFIX -- but the value is also shown to the user, and the trailing
+    // CR case exists because nothing here should depend on which the kernel
+    // emitted.
+    CHECK(detail::productFromSysfs("/sys/a", "fallback",
+                                   readerFor({ { "/sys/a/product", "X\r\n" } })) == "X");
+}
+
+TEST_CASE("productFromSysfs leaves a Windows device instance id alone") {
+    // The guard, and the reason this is a value test rather than an #ifdef:
+    // `_raw` is an instance id on Windows, where `name` already begins with the
+    // product string. Following it would be nonsense, and the reader must never
+    // even be consulted.
+    bool consulted = false;
+    detail::ReadFileFn spy = [&consulted](const std::string&) -> std::optional<std::string> {
+        consulted = true;
+        return "should not be read";
+    };
+    CHECK(detail::productFromSysfs("USB\\VID_093C&PID_2055\\E463A857",
+                                   "FWOG display bl 001 (USB Serial Device)", spy)
+          == "FWOG display bl 001 (USB Serial Device)");
+    CHECK_FALSE(consulted);
+}
+
+TEST_CASE("productFromSysfs falls back rather than blanking the field") {
+    const std::string name = "FreeWili MainCPU v92";
+    // No reader at all.
+    CHECK(detail::productFromSysfs("/sys/a", name, nullptr) == name);
+    // A path that is not there (device unplugged between enumeration and here).
+    CHECK(detail::productFromSysfs("/sys/a", name, readerFor({})) == name);
+    // A device that publishes an empty iProduct has told us nothing, and
+    // nothing is not an improvement on the display name.
+    CHECK(detail::productFromSysfs("/sys/a", name,
+                                   readerFor({ { "/sys/a/product", "\n" } })) == name);
+    // An empty `_raw` -- substr on a shorter string must not throw.
+    CHECK(detail::productFromSysfs("", name, readerFor({})) == name);
+}
+
+TEST_CASE("the display bootloader's own product string reaches both prefix tests") {
+    // THE REGRESSION THIS FIXES, end to end through the pure layer, with the
+    // strings firmware/bl_display.uf2 really declares: manufacturer
+    // "FreeWili OG", product "FWOG display bl 001", 093C:2055.
+    const std::string finderName = "FreeWili OG FWOG display bl 001";
+    const auto read = readerFor({ { "/sys/d/product", "FWOG display bl 001\n" } });
+    const std::string product = detail::productFromSysfs("/sys/d", finderName, read);
+
+    // What Linux used to put in the field, and what it does now.
+    CpuIdentity before;
+    before.displayPort = "/dev/ttyACM1";
+    before.displayProduct = finderName;
+    CHECK(ogBootloaderState(before) == OgBootloaderState::Missing);   // wrong, and expensive
+
+    CpuIdentity after;
+    after.displayPort = "/dev/ttyACM1";
+    after.displayProduct = product;
+    CHECK(ogBootloaderState(after) == OgBootloaderState::Present);
+
+    // Signal 2 likewise: a record carrying no structural flag is what pass 2
+    // exists for, and the prefix has to be at position 0 to be seen.
+    auto rec = usbDeviceToRecord(UsbKind::Serial, "/dev/ttyACM1", product);
+    REQUIRE(rec.has_value());
+    const std::vector<CpuPortRecord> records{ *rec };
+    const auto id = identifyCpus(records);
+    REQUIRE(id.displayPort.has_value());
+    CHECK(*id.displayPort == "/dev/ttyACM1");
+    CHECK(id.displaySource == IdentitySource::ProductString);
+
+    // And with the un-stripped name it resolves nothing at all -- which is the
+    // state Linux was in.
+    auto stale = usbDeviceToRecord(UsbKind::Serial, "/dev/ttyACM1", finderName);
+    REQUIRE(stale.has_value());
+    const std::vector<CpuPortRecord> staleRecords{ *stale };
+    CHECK_FALSE(identifyCpus(staleRecords).displayPort.has_value());
+}
+
+// WHAT IS NOT TESTED HERE, AND WHY IT CANNOT BE.
+//
+// Everything above drives productFromSysfs(), the pure seam. None of it touches
+// the one line that makes the fix reach production: toCpuPortRecords() calling
+// productStringOf(usb) rather than usb.name. Reverting exactly that line leaves
+// this whole suite green while the shipped app goes back to reading the wrong
+// string -- found by mutation, not by reasoning.
+//
+// I tried to close it and could not, and the reason is the guard itself.
+// productStringOf() only consults sysfs when `_raw` starts with "/sys/" -- a
+// value test rather than an #ifdef, so the Windows instance-id shape provably
+// falls through. That same guard rejects any synthetic path a test could
+// create: a temp directory holding a `product` file is not under /sys/, so the
+// real function correctly ignores it and returns usb.name, and the test fails
+// against CORRECT code. Pointing `_raw` at a real /sys device instead would
+// make the assertion depend on which board is plugged in, which this suite
+// deliberately never does.
+//
+// So the honest options were: leave the gap, or weaken the guard to make it
+// testable. Weakening a guard so a test can reach it is the wrong trade when
+// the guard is what keeps a Linux-only code path off the Windows build.
+//
+// The line is not unverified, though -- it is verified more strongly than a
+// unit test would manage, just not here. It was measured on the real board in
+// both directions: with the line present the device bar shows no bootloader
+// banner, and with only that line reverted the same board -- which
+// demonstrably carries the bootloader -- renders "No OG bootloader on this
+// board". That is recorded in docs/hardware-verification.md.
 #endif

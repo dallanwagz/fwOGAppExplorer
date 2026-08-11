@@ -1,5 +1,9 @@
 #include "device/fwDeviceRecords.h"
 
+#include <array>
+#include <fstream>
+#include <string_view>
+
 namespace fwog {
 
 std::optional<CpuPortRecord> usbDeviceToRecord(UsbKind kind,
@@ -70,6 +74,50 @@ UsbKind fromFwfinder(Fw::USBDeviceType t)
     }
 }
 
+namespace detail {
+
+std::string productFromSysfs(const std::string& rawSyspath,
+                             const std::string& finderName,
+                             const ReadFileFn& readFile)
+{
+    constexpr std::string_view kSysPrefix = "/sys/";
+    if (std::string_view(rawSyspath).substr(0, kSysPrefix.size()) != kSysPrefix)
+        return finderName;
+    if (!readFile) return finderName;
+
+    const auto raw = readFile(rawSyspath + "/product");
+    if (!raw) return finderName;
+
+    // sysfs string attributes come back newline-terminated. Trailing CR is
+    // trimmed with it so the comparison cannot depend on which the kernel
+    // happened to emit -- the prefix tests downstream are exact.
+    std::string value = *raw;
+    while (!value.empty() && (value.back() == '\n' || value.back() == '\r'))
+        value.pop_back();
+
+    // A device that publishes an EMPTY iProduct has told us nothing, which is
+    // not an improvement on the display name.
+    return value.empty() ? finderName : value;
+}
+
+} // namespace detail
+
+std::string productStringOf(const Fw::USBDevice& usb)
+{
+    return detail::productFromSysfs(usb._raw, usb.name,
+        [](const std::string& path) -> std::optional<std::string> {
+            std::ifstream f(path, std::ios::binary);
+            if (!f) return std::nullopt;
+            // Bounded, like fwVolume.cpp's INFO_UF2.TXT read and for the same
+            // reason: this is a file whose size is decided by a device the user
+            // plugged in. A USB string descriptor cannot exceed 126 characters,
+            // so 256 bytes is the whole of any honest answer.
+            std::array<char, 256> buf{};
+            f.read(buf.data(), buf.size());
+            return std::string(buf.data(), static_cast<std::size_t>(f.gcount()));
+        });
+}
+
 std::vector<CpuPortRecord> toCpuPortRecords(const Fw::FreeWiliDevice& device)
 {
     std::vector<CpuPortRecord> out;
@@ -83,7 +131,10 @@ std::vector<CpuPortRecord> toCpuPortRecords(const Fw::FreeWiliDevice& device)
         if (usb.paths.has_value() && usb.paths->size() == 1)
             volume = usb.paths->front();
 
-        if (auto r = usbDeviceToRecord(fromFwfinder(usb.kind), port, usb.name,
+        // productStringOf(usb), NOT usb.name: the display name fwfinder builds
+        // is not the USB product string on every platform, and the prefix tests
+        // downstream are anchored at position 0. See productStringOf().
+        if (auto r = usbDeviceToRecord(fromFwfinder(usb.kind), port, productStringOf(usb),
                                        usb.location, volume))
             out.push_back(std::move(*r));
     }
