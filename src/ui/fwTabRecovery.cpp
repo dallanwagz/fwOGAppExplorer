@@ -347,11 +347,24 @@ void TabRecovery::draw(DeviceModel& deviceModel, const std::function<void(int)>&
     // --- 1. MAIN --------------------------------------------------------
     ImGui::SeparatorText(ICON_MD_MEMORY " MAIN CPU -- the red button");
     ImGui::Indent();
-    ImGui::TextWrapped("Disconnect the battery, then plug the board into USB with the red "
-                       "button held down.");
-    ImGui::TextColored(kMutedColor, "The battery has to come out: with it connected the board "
-                                     "never actually powers down, so the button is not being "
-                                     "read at the moment that decides this.");
+    // The procedure that actually worked on hardware, in the order it worked
+    // in. This used to say "disconnect the battery, then plug in with the red
+    // button held", which is true and asks the user to open the case. The red
+    // button can power the board down on its own, and the internal LED says
+    // when it has -- so the whole thing is doable with the case shut, and the
+    // LED gives the user something to WAIT FOR rather than a duration to
+    // guess at.
+    //
+    // Keep the battery sentence: it is the fallback when the LED never
+    // settles, and it is the reason any of this is necessary.
+    ImGui::TextWrapped("Unplug USB. Hold the red button down until the internal LED stops "
+                       "blinking -- that is the board actually powering off. Keep holding it, "
+                       "and plug USB back in.");
+    ImGui::TextColored(kMutedColor, "Wait for the LED rather than counting: until the board is "
+                                     "really off, the button is not being read at the moment "
+                                     "that decides this, and a replug that merely looks like a "
+                                     "power cycle is not one. If the LED never stops, "
+                                     "disconnecting the battery does the same job.");
     ImGui::Unindent();
     ImGui::Spacing();
 
