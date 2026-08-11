@@ -1,56 +1,159 @@
 {
   "subtitle": "Builder/critic loop against the verified Windows build",
   "branch": "linux-support",
-  "updated": "2026-08-10 21:55",
-  "phase": "C1 — build & toolchain",
+  "updated": "2026-08-10 22:20",
+  "phase": "C2 \u2014 test suite",
   "components": [
-    { "id": "C1",  "name": "Build & toolchain",
+    {
+      "id": "C1",
+      "name": "Build & toolchain",
       "bar": "Warning-clean at -Wall -Wextra, as MSVC is at /W4",
-      "status": "building", "rounds": 0,
-      "note": "Baseline: build fails at 113/559 — fwfinder_linux.cpp missing <functional>" },
-    { "id": "C2",  "name": "Test suite",
+      "status": "passed",
+      "rounds": 1,
+      "note": "PASS round 1. Critic verified fresh-clone patch via real FetchContent populate."
+    },
+    {
+      "id": "C2",
+      "name": "Test suite",
       "bar": "Full ctest green, same case count as Windows",
-      "status": "pending", "rounds": 0, "note": "" },
-    { "id": "C3",  "name": "fwPaths (POSIX)",
+      "status": "building",
+      "rounds": 0,
+      "note": ""
+    },
+    {
+      "id": "C3",
+      "name": "fwPaths (POSIX)",
       "bar": "/proc/self/exe matches GetModuleFileName semantics",
-      "status": "pending", "rounds": 0, "note": "" },
-    { "id": "C4",  "name": "fwVolume (Linux)",
+      "status": "pending",
+      "rounds": 0,
+      "note": ""
+    },
+    {
+      "id": "C4",
+      "name": "fwVolume (Linux)",
       "bar": "RPI-RP2 discovery incl. not-auto-mounted case; write verified + flushed",
-      "status": "pending", "rounds": 0, "note": "" },
-    { "id": "C5",  "name": "fwSerialPorts (Linux)",
+      "status": "pending",
+      "rounds": 0,
+      "note": ""
+    },
+    {
+      "id": "C5",
+      "name": "fwSerialPorts (Linux)",
       "bar": "usbId populated from /sys, parity with Windows SetupAPI path",
-      "status": "pending", "rounds": 0,
-      "note": "Largest known gap — usbId is currently left empty by design" },
-    { "id": "C6",  "name": "fwSerialTouch (Linux)",
+      "status": "pending",
+      "rounds": 0,
+      "note": "Largest known gap \u2014 usbId is currently left empty by design"
+    },
+    {
+      "id": "C6",
+      "name": "fwSerialTouch (Linux)",
       "bar": "1200-baud touch drops a CPU into BOOTSEL on the real board",
-      "status": "pending", "rounds": 0, "note": "" },
-    { "id": "C7",  "name": "fwHttp (Linux)",
+      "status": "pending",
+      "rounds": 0,
+      "note": ""
+    },
+    {
+      "id": "C7",
+      "name": "fwHttp (Linux)",
       "bar": "dlopen libcurl remote-catalog fetch succeeds",
-      "status": "pending", "rounds": 0, "note": "" },
-    { "id": "C8",  "name": "Device identification",
+      "status": "pending",
+      "rounds": 0,
+      "note": ""
+    },
+    {
+      "id": "C8",
+      "name": "Device identification",
       "bar": "MAIN vs DISPLAY resolved via hub port location on real hardware",
-      "status": "pending", "rounds": 0, "note": "" },
-    { "id": "C9",  "name": "UI / rendering",
+      "status": "pending",
+      "rounds": 0,
+      "note": ""
+    },
+    {
+      "id": "C9",
+      "name": "UI / rendering",
       "bar": "Renders under Xvfb; window icon, DPI, window-state restore",
-      "status": "pending", "rounds": 0, "note": "" },
-    { "id": "C10", "name": "Packaging & docs",
+      "status": "pending",
+      "rounds": 0,
+      "note": ""
+    },
+    {
+      "id": "C10",
+      "name": "Packaging & docs",
       "bar": "udev rules, single-binary check, README, hardware-verification.md",
-      "status": "pending", "rounds": 0, "note": "" }
+      "status": "pending",
+      "rounds": 0,
+      "note": "Inherited follow-up: fwVolumeState.h:114 cites nonexistent GuardAction::WriteByElimination"
+    }
   ],
   "metrics": [
-    { "metric": "Configure", "baseline": "clean", "current": "clean",
-      "target": "clean", "note": "SDL3 detects wayland + x11 + vulkan" },
-    { "metric": "Build result", "baseline": "FAIL 113/559", "current": "FAIL 113/559",
-      "target": "559/559", "note": "fwfinder_linux.cpp missing <functional>" },
-    { "metric": "Warnings (our code)", "baseline": "1", "current": "1",
-      "target": "0", "note": "fwVolumeState.cpp:70 unused parameter" }
+    {
+      "metric": "Configure",
+      "baseline": "clean",
+      "current": "clean",
+      "target": "clean",
+      "note": "SDL3 detects wayland + x11 + vulkan"
+    },
+    {
+      "metric": "Build result",
+      "baseline": "FAIL 113/559",
+      "current": "builds",
+      "target": "builds",
+      "note": "fwfinder <functional> patch via existing PATCH_COMMAND precedent"
+    },
+    {
+      "metric": "Warnings (our code)",
+      "baseline": "1 known / 10 real",
+      "current": "0",
+      "target": "0",
+      "note": "67-TU forced recompile, -Wall -Wextra"
+    },
+    {
+      "metric": "libstdc++.so.6 in DT_NEEDED",
+      "baseline": "unverified",
+      "current": "absent",
+      "target": "absent",
+      "note": "-static-libstdc++ confirmed on 7 link lines"
+    },
+    {
+      "metric": "Shared lib deps",
+      "baseline": "unverified",
+      "current": "4",
+      "target": "minimal",
+      "note": "libudev, libm, libc, ld-linux. libgcc_s only transitively via libudev"
+    },
+    {
+      "metric": "Binary size (stripped)",
+      "baseline": "n/a",
+      "current": "9,343,880 B",
+      "target": "n/a",
+      "note": "unstripped 10,556,488 B"
+    }
   ],
   "log": [
-    { "t": "21:42", "who": "orchestrator",
-      "msg": "Baseline measured: configure clean, build fails at 113/559 in upstream fwfinder." },
-    { "t": "21:44", "who": "orchestrator",
-      "msg": "Hardware confirmed present: 093c:2054 Main v87 + 093c:2055 Display v67 on /dev/ttyACM0-1." },
-    { "t": "21:52", "who": "orchestrator",
-      "msg": "Design approved. Branch linux-support created; 10 components defined." }
+    {
+      "t": "21:42",
+      "who": "orchestrator",
+      "msg": "Baseline measured: configure clean, build fails at 113/559 in upstream fwfinder."
+    },
+    {
+      "t": "21:44",
+      "who": "orchestrator",
+      "msg": "Hardware confirmed present: 093c:2054 Main v87 + 093c:2055 Display v67 on /dev/ttyACM0-1."
+    },
+    {
+      "t": "21:52",
+      "who": "orchestrator",
+      "msg": "Design approved. Branch linux-support created; 10 components defined."
+    },
+    {
+      "t": "22:18",
+      "who": "C1 builder",
+      "msg": "Patched fwfinder <functional>; fixed 10 real warnings incl. 9 unreported in test_fwCpuIdentify."
+    },
+    {
+      "t": "22:20",
+      "who": "C1 critic",
+      "msg": "PASS. Verified all 7 claims; confirmed fresh-clone patch through a real FetchContent populate."
+    }
   ]
 }

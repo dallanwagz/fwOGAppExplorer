@@ -20,7 +20,7 @@
   .track { height:10px; background:#21262d; border-radius:99px; overflow:hidden;
             margin:.6rem 0 .4rem; }
   .fill { height:100%; background:linear-gradient(90deg,#10b981,#58a6ff);
-           width:0%; transition:width .4s; }
+           width:10%; transition:width .4s; }
   .counts { display:flex; justify-content:space-between; font-size:.85rem;
              color:var(--dim); }
   table { width:100%; border-collapse:collapse; background:var(--panel);
@@ -58,13 +58,13 @@
 <h1>fwOGAppExplorer &mdash; Linux port</h1>
 <p class="sub">Builder/critic loop against the verified Windows build &middot; branch
   <code>linux-support</code> &middot; updated
-  2026-08-10 21:55</p>
+  2026-08-10 22:20</p>
 
 <div class="progress">
-  <strong>0 of 10 components passed</strong>
+  <strong>1 of 10 components passed</strong>
   <div class="track"><div class="fill"></div></div>
-  <div class="counts"><span>0% complete</span>
-    <span>C1 — build &amp; toolchain</span></div>
+  <div class="counts"><span>10% complete</span>
+    <span>C2 — test suite</span></div>
 </div>
 
 <h2>Components</h2>
@@ -76,15 +76,15 @@
           <td class="id">C1</td>
           <td class="name">Build &amp; toolchain
             <div class="bar">Warning-clean at -Wall -Wextra, as MSVC is at /W4</div></td>
-          <td><span class="pill" style="--c:#3b82f6">Builder</span></td>
-          <td class="num">&mdash;</td>
-          <td class="note">Baseline: build fails at 113/559 — fwfinder_linux.cpp missing &lt;functional&gt;</td>
+          <td><span class="pill" style="--c:#10b981">Passed</span></td>
+          <td class="num">1</td>
+          <td class="note">PASS round 1. Critic verified fresh-clone patch via real FetchContent populate.</td>
         </tr>
         <tr>
           <td class="id">C2</td>
           <td class="name">Test suite
             <div class="bar">Full ctest green, same case count as Windows</div></td>
-          <td><span class="pill" style="--c:#6b7280">Pending</span></td>
+          <td><span class="pill" style="--c:#3b82f6">Builder</span></td>
           <td class="num">&mdash;</td>
           <td class="note"></td>
         </tr>
@@ -150,7 +150,7 @@
             <div class="bar">udev rules, single-binary check, README, hardware-verification.md</div></td>
           <td><span class="pill" style="--c:#6b7280">Pending</span></td>
           <td class="num">&mdash;</td>
-          <td class="note"></td>
+          <td class="note">Inherited follow-up: fwVolumeState.h:114 cites nonexistent GuardAction::WriteByElimination</td>
         </tr></tbody>
 </table>
 
@@ -169,21 +169,42 @@
         <tr>
           <td class="name">Build result</td>
           <td class="num">FAIL 113/559</td>
-          <td class="num">FAIL 113/559</td>
-          <td class="num">559/559</td>
-          <td class="note">fwfinder_linux.cpp missing &lt;functional&gt;</td>
+          <td class="num">builds</td>
+          <td class="num">builds</td>
+          <td class="note">fwfinder &lt;functional&gt; patch via existing PATCH_COMMAND precedent</td>
         </tr>
         <tr>
           <td class="name">Warnings (our code)</td>
-          <td class="num">1</td>
-          <td class="num">1</td>
+          <td class="num">1 known / 10 real</td>
           <td class="num">0</td>
-          <td class="note">fwVolumeState.cpp:70 unused parameter</td>
+          <td class="num">0</td>
+          <td class="note">67-TU forced recompile, -Wall -Wextra</td>
+        </tr>
+        <tr>
+          <td class="name">libstdc++.so.6 in DT_NEEDED</td>
+          <td class="num">unverified</td>
+          <td class="num">absent</td>
+          <td class="num">absent</td>
+          <td class="note">-static-libstdc++ confirmed on 7 link lines</td>
+        </tr>
+        <tr>
+          <td class="name">Shared lib deps</td>
+          <td class="num">unverified</td>
+          <td class="num">4</td>
+          <td class="num">minimal</td>
+          <td class="note">libudev, libm, libc, ld-linux. libgcc_s only transitively via libudev</td>
+        </tr>
+        <tr>
+          <td class="name">Binary size (stripped)</td>
+          <td class="num">n/a</td>
+          <td class="num">9,343,880 B</td>
+          <td class="num">n/a</td>
+          <td class="note">unstripped 10,556,488 B</td>
         </tr></tbody>
 </table>
 
 <h2>Activity</h2>
-<ul class="log"><li><span class="ts">21:52</span><span class="who">orchestrator</span><span class="msg">Design approved. Branch linux-support created; 10 components defined.</span></li><li><span class="ts">21:44</span><span class="who">orchestrator</span><span class="msg">Hardware confirmed present: 093c:2054 Main v87 + 093c:2055 Display v67 on /dev/ttyACM0-1.</span></li><li><span class="ts">21:42</span><span class="who">orchestrator</span><span class="msg">Baseline measured: configure clean, build fails at 113/559 in upstream fwfinder.</span></li></ul>
+<ul class="log"><li><span class="ts">22:20</span><span class="who">C1 critic</span><span class="msg">PASS. Verified all 7 claims; confirmed fresh-clone patch through a real FetchContent populate.</span></li><li><span class="ts">22:18</span><span class="who">C1 builder</span><span class="msg">Patched fwfinder &lt;functional&gt;; fixed 10 real warnings incl. 9 unreported in test_fwCpuIdentify.</span></li><li><span class="ts">21:52</span><span class="who">orchestrator</span><span class="msg">Design approved. Branch linux-support created; 10 components defined.</span></li><li><span class="ts">21:44</span><span class="who">orchestrator</span><span class="msg">Hardware confirmed present: 093c:2054 Main v87 + 093c:2055 Display v67 on /dev/ttyACM0-1.</span></li><li><span class="ts">21:42</span><span class="who">orchestrator</span><span class="msg">Baseline measured: configure clean, build fails at 113/559 in upstream fwfinder.</span></li></ul>
 
 <footer>Auto-refreshes every 30s. Generated by
   <code>tools/gen_progress.py</code> from
