@@ -8,6 +8,12 @@
 #include "ui/fwTabRecovery.h"
 #include "ui/fwTabSettings.h"
 #include "ui/fwBoardImage.h"
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+  // Guarded on the same condition CMakeLists.txt uses to decide whether this
+  // file is compiled at all -- on Windows the icon is wired up by linking
+  // resources/app.rc and nothing calls into here. See fwWindowIcon.h.
+  #include "ui/fwWindowIcon.h"
+#endif
 #include "ui/fwFlashDialog.h"
 #include "device/fwFinderManager.h"
 #include "device/fwDeviceModel.h"
@@ -290,6 +296,13 @@ int App::run()
     }
     if (settings.windowX >= 0 && settings.windowY >= 0)
         SDL_SetWindowPosition(window, settings.windowX, settings.windowY);
+
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+    // Straight after the window exists and before anything can show it: an
+    // icon set later would mean a window that appears with the default one
+    // and changes a moment afterwards.
+    applyWindowIcon(window);
+#endif
 
     SDL_Renderer* renderer = SDL_CreateRenderer(window, nullptr);
     if (!renderer) {

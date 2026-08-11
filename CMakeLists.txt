@@ -165,6 +165,14 @@ add_library(fwog_core STATIC
     # fwog_device.
     src/ui/fwTabDefaultFirmwareLogic.h
     src/ui/fwTabDefaultFirmwareLogic.cpp
+    # The .ICO parser behind the window icon, here for the same reason as the
+    # line above and the fwCatalogFilter precedent: it is pure byte handling
+    # with no SDL, so fwog_tests can feed it malformed containers directly.
+    # Compiled on every platform even though only the non-Windows builds link
+    # the SDL glue that calls it (src/ui/fwWindowIcon.cpp), so that a Windows
+    # developer's ctest run still covers it.
+    src/ui/fwIcoImage.h
+    src/ui/fwIcoImage.cpp
     ${_gen_src}
     ${_gen_hdr}
 )
@@ -346,6 +354,15 @@ if(MSVC)
     target_compile_options(imgui PRIVATE /W3)
 endif()
 
+# The runtime half of the window icon, guarded on the SAME condition as the
+# embedded .ico it decodes (cmake/EmbedResources.cmake): the two are useless
+# apart, so they are switched on and off together rather than by two
+# independent tests that can drift.
+set(_ui_icon_src "")
+if(_res_icon_src)
+    set(_ui_icon_src src/ui/fwWindowIcon.h src/ui/fwWindowIcon.cpp)
+endif()
+
 add_executable(fwOGAppExplorer
     src/main.cpp
     src/ui/fwApp.h
@@ -371,6 +388,14 @@ add_executable(fwOGAppExplorer
     # target rather than on fwog_core because only the UI ever draws it, and
     # fwog_tests links fwog_core without SDL.
     ${_res_board_src}
+    # The window icon at runtime, and the icon bytes it decodes. Both empty on
+    # Windows, where linking resources/app.rc is the whole of the icon wiring
+    # -- see src/ui/fwWindowIcon.h and cmake/EmbedResources.cmake. The PURE
+    # decoder is not here: fwIcoImage.cpp is in fwog_core so fwog_tests can
+    # exercise it without SDL, on every platform including the one that does
+    # not link this glue.
+    ${_res_icon_src}
+    ${_ui_icon_src}
     src/ui/fwFlashDialog.h
     src/ui/fwFlashDialog.cpp
 )
@@ -513,6 +538,7 @@ add_executable(fwog_tests
     tests/test_fwSettingsIo.cpp
     tests/test_fwCpuProbe.cpp
     tests/test_fwSerialPorts.cpp
+    tests/test_fwIcoImage.cpp
 )
 target_link_libraries(fwog_tests PRIVATE fwog_core fwog_device fwog_platform fwog_flash doctest::doctest)
 

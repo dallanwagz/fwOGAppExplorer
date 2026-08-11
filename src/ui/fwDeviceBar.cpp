@@ -173,10 +173,35 @@ void DeviceBar::draw(DeviceModel& model, const std::string& identificationNote,
             // is up. The button starts a flash on the device snapshot as it
             // stands, with no pause in which a board could be swapped, so what
             // is left to guarantee is that the snapshot is RECENT -- and this is
-            // the only window in which the button can be pressed. Costs an
-            // atomic store per frame (fwFinderManager::requestRefresh) and is
-            // scoped to a banner that only appears on a board missing its
-            // bootloader.
+            // the only window in which the button can be pressed. Scoped to a
+            // banner that only appears on a board missing its bootloader.
+            //
+            // WHAT IT COSTS, measured rather than reasoned about. This line
+            // used to describe its own price as "an atomic store per frame
+            // (fwFinderManager::requestRefresh)", which is true of the call and
+            // badly understates the consequence: re-arming every frame means
+            // the request window never expires, so the scanner never drops back
+            // to kIdlePollMs and enumerates at kFastPollMs for as long as the
+            // banner is up. On Linux, with a bootloader-less board attached,
+            // that worker thread was measured at ~48-50% of one CPU core
+            // continuously (~52 ms of CPU per Fw::find_all(), ~6,200 read()
+            // syscalls per second against sysfs), against ~3% for the UI thread
+            // doing all the rendering.
+            //
+            // Only that per-scan cost is platform-specific. The MECHANISM is
+            // not, and that is knowable by reading rather than by measuring:
+            // this re-arm, kFastPollMs and kIdlePollMs are all in shared code
+            // with no platform variation in them, so Windows holds the scanner
+            // in the same permanent fast poll. Saying "not measured on Windows"
+            // here would invite a reader to suspect a Linux quirk, and there
+            // is not one.
+            //
+            // Left as it is, deliberately: the freshness guarantee above is
+            // what makes a one-click flash safe, and this is the only state in
+            // which the button exists. But the number belongs here, because
+            // "an atomic store" invites someone to widen this pattern to a
+            // banner that is up all the time, and that would be a very
+            // different bill.
             model.requestRescan();
 
             ImGui::SameLine();
