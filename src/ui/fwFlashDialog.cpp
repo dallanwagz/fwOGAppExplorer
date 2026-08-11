@@ -332,9 +332,26 @@ void FlashDialog::draw(DeviceModel& deviceModel, const std::function<void(Recove
         // timeout would be worse than no bar at all: this dialog has already
         // told a user something untrue once (that nothing had been written
         // when a CPU had), and it will not do it again in a different colour.
+        //
+        // AND IT STOPS CLAIMING TO BE LIVE ONCE THE RUN ENDS. A failed run used
+        // to leave this bar reading "Step 2 of 3 -- 48%" with the estimate
+        // below it still counting, which is how a finished failure comes to
+        // look like a hang: the only thing on screen saying otherwise was the
+        // error text, and a half-filled bar with a ticking clock above it
+        // argues louder than a paragraph. That is the same fault as the one
+        // this block's comment already warns about, arrived at from the other
+        // end -- not a bar that lies while running, but a bar that goes on
+        // talking after there is nothing left to say.
         const float fraction = m_controller.progressFraction();
         char overallOverlay[96];
-        if (p.has_value()) {
+        if (!running && p.has_value()) {
+            // Terminal. Say where it STOPPED, with no percentage: a percentage
+            // is a statement about work still in flight.
+            std::snprintf(overallOverlay, sizeof(overallOverlay),
+                          state == FlashState::Succeeded ? "Finished -- %zu of %zu steps"
+                                                         : "Stopped at step %zu of %zu",
+                          p->stepIndex + 1, p->stepCount);
+        } else if (p.has_value()) {
             std::snprintf(overallOverlay, sizeof(overallOverlay), "Step %zu of %zu -- %d%%",
                           p->stepIndex + 1, p->stepCount,
                           static_cast<int>(fraction * 100.0f + 0.5f));
@@ -353,7 +370,12 @@ void FlashDialog::draw(DeviceModel& deviceModel, const std::function<void(Recove
         // It is not derived from anything the engine reports, it holds just
         // short of full while the flash is still running however far past the
         // estimate that goes, and it fills only when the run really ends.
-        if (hasTimeEstimate()) {
+        // `running` and not merely hasTimeEstimate(): an estimate of the time
+        // remaining in a run that is over is not a stale number, it is a false
+        // one. On a failure it kept rendering "taking longer than expected",
+        // which reads as "still working, be patient" at precisely the moment
+        // the user needs to read the error and go to Recovery.
+        if (running && hasTimeEstimate()) {
             const std::string left = estimatedRemaining();
             char estOverlay[96];
             std::snprintf(estOverlay, sizeof(estOverlay), "Estimated -- %s", left.c_str());
