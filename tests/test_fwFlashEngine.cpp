@@ -1428,6 +1428,26 @@ TEST_CASE("a mapping for one CPU does not authorise a write to the other") {
     CHECK(r.message.find("G:/") != std::string::npos);
     CHECK(r.message.find("MAIN") != std::string::npos);
     CHECK(r.message.find("DISPLAY") != std::string::npos);
+
+    // AND THE REMEDY ADDRESSES THIS STEP'S CPU, not the one whose drive
+    // happens to be mounted. The message used to end "Flash the MAIN CPU
+    // first, or unmount that volume", which reads as actionable and is not:
+    // flashing MAIN is a different plan, and unmounting leaves this step with
+    // no drive AND no port, refusing again one branch over. A user who
+    // followed it arrived at a second error having changed nothing that
+    // mattered. What unblocks this step is putting ITS CPU into the bootloader.
+    CHECK(r.message.find("Put the DISPLAY CPU into its bootloader") != std::string::npos);
+    // The DISPLAY procedure specifically -- it has no button, so "hold the red
+    // button" would send the user looking for one that does not exist.
+    CHECK(r.message.find("BOOTSEL pad") != std::string::npos);
+    CHECK(r.message.find("red button") == std::string::npos);
+    // And it says the state the user is being sent into is legitimate, because
+    // it looks like it should not be: two RPI-RP2 drives at once used to be
+    // exactly what this app refused over, and hub position is why it no longer
+    // is. Without this a cautious user stops here.
+    CHECK(r.message.find("Both CPUs being in BOOTSEL at once is fine") != std::string::npos);
+    // The advice that was wrong is gone, not merely supplemented.
+    CHECK(r.message.find("unmount that volume") == std::string::npos);
 }
 
 TEST_CASE("both CPUs in the bootrom flash to their own drives, with no probe and no prompt") {

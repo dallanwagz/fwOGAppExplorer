@@ -485,12 +485,37 @@ FlashResult runFlashPlan(const FlashIo& io,
                 ? "the Recovery tab's CPU probe measured that, it is not a guess"
                 : "it is on that CPU's port of the board's internal USB hub, which is "
                   "structural and does not depend on what firmware is loaded";
+            // THE REMEDY HAS TO ADDRESS THE STEP'S OWN CPU. This used to end
+            // "Flash the <other> CPU first, or unmount that volume", and both
+            // halves were wrong in the same way: they answer a question about
+            // the drive that IS here rather than the CPU that is not.
+            //
+            // Flashing the other CPU is advice for a different plan; it does
+            // nothing for this step. And unmounting is worse than useless --
+            // with the volume gone the state becomes NoneMounted with still no
+            // port, which refuses again one branch over, so the user follows an
+            // instruction and arrives at a different error. What actually
+            // unblocks this step is the one thing neither half mentioned:
+            // getting THIS step's CPU into its bootloader too.
+            //
+            // Naming the procedure per CPU rather than pointing at Recovery
+            // alone, because the two differ in a way that matters: MAIN has a
+            // button and DISPLAY does not, and a user told to "put it into
+            // BOOTSEL" who goes looking for a button on the DISPLAY CPU will
+            // not find one.
+            const char* howToBootsel = step.cpu == TargetCpu::Main
+                ? "disconnect the battery, then plug the board into USB with the red "
+                  "button held down"
+                : "short the DISPLAY BOOTSEL pad to ground while the board powers up";
             return failStep(FlashOutcome::RefusedWrongCpu,
                             "the one RPI-RP2 volume mounted (" + volumes.front() + ") is the " +
                             theirs + " CPU -- " + how + " -- and this step writes to the " +
                             mine + " CPU, which is not answering on a port either. "
                             "Writing here would put this image on the wrong CPU, so nothing was "
-                            "written. Flash the " + theirs + " CPU first, or unmount that volume.",
+                            "written. Put the " + mine + " CPU into its bootloader as well and "
+                            "try again: " + howToBootsel + ". Both CPUs being in BOOTSEL at once "
+                            "is fine -- each drive is told apart by which port of the board's "
+                            "internal hub it is on. The Recovery tab has both procedures.",
                             i);
         }
 
