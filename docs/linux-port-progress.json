@@ -1,8 +1,8 @@
 {
   "subtitle": "Builder/critic loop against the verified Windows build",
   "branch": "linux-support",
-  "updated": "2026-08-10 22:20",
-  "phase": "C2 \u2014 test suite",
+  "updated": "2026-08-10 23:30",
+  "phase": "C3 \u2014 fwPaths (POSIX)",
   "components": [
     {
       "id": "C1",
@@ -16,15 +16,15 @@
       "id": "C2",
       "name": "Test suite",
       "bar": "Full ctest green, same case count as Windows",
-      "status": "building",
-      "rounds": 0,
-      "note": ""
+      "status": "passed",
+      "rounds": 3,
+      "note": "PASS round 3. 494/494. Rounds 1-2 failed on doc accuracy and an mtime-based stale-embed hole."
     },
     {
       "id": "C3",
       "name": "fwPaths (POSIX)",
       "bar": "/proc/self/exe matches GetModuleFileName semantics",
-      "status": "pending",
+      "status": "building",
       "rounds": 0,
       "note": ""
     },
@@ -127,6 +127,27 @@
       "current": "9,343,880 B",
       "target": "n/a",
       "note": "unstripped 10,556,488 B"
+    },
+    {
+      "metric": "Tests",
+      "baseline": "466/494 (28 fail)",
+      "current": "494/494",
+      "target": "494/494",
+      "note": "1943 assertions; stable across randomized orderings"
+    },
+    {
+      "metric": "Embedded images",
+      "baseline": "1 (probe only)",
+      "current": "5 img / 4 entries",
+      "target": "5 / 4",
+      "note": "all manifest entries survive; no silent drops"
+    },
+    {
+      "metric": "Idle build",
+      "baseline": "ninja: no work",
+      "current": "74 ms",
+      "target": "<100 ms",
+      "note": "embed step now always runs, hash short-circuits; no recompile or relink"
     }
   ],
   "log": [
@@ -154,6 +175,31 @@
       "t": "22:20",
       "who": "C1 critic",
       "msg": "PASS. Verified all 7 claims; confirmed fresh-clone patch through a real FetchContent populate."
+    },
+    {
+      "t": "22:45",
+      "who": "C2 builder",
+      "msg": "Confirmed all 28 failures were firmware absence, none Linux-specific. Sourced payloads."
+    },
+    {
+      "t": "23:00",
+      "who": "C2 critic",
+      "msg": "FAIL round 1: flash_nuke provenance prose factually wrong; found mtime stale-embed hole."
+    },
+    {
+      "t": "23:12",
+      "who": "C2 critic",
+      "msg": "FAIL round 2: hash stamp only recomputes at configure time; 3 more doc errors."
+    },
+    {
+      "t": "23:28",
+      "who": "C2 builder",
+      "msg": "Embed now runs every build, hashing inputs itself. probe.uf2 covered too."
+    },
+    {
+      "t": "23:30",
+      "who": "C2 critic",
+      "msg": "PASS round 3. Reproduced the hard case; verified ninja edge ordering and every doc claim."
     }
   ]
 }
