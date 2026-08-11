@@ -1,8 +1,8 @@
 {
   "subtitle": "Builder/critic loop against the verified Windows build",
   "branch": "linux-support",
-  "updated": "2026-08-11 02:35",
-  "phase": "C7 \u2014 fwHttp (round 2)",
+  "updated": "2026-08-11 03:50",
+  "phase": "C4 \u2014 fwVolume (first real write to the board)",
   "components": [
     {
       "id": "C1",
@@ -32,9 +32,9 @@
       "id": "C4",
       "name": "fwVolume (Linux)",
       "bar": "RPI-RP2 discovery incl. not-auto-mounted case; write verified + flushed",
-      "status": "pending",
+      "status": "building",
       "rounds": 0,
-      "note": ""
+      "note": "RPI-RP2 auto-mounts via udisks2 2.27-2.40s after RP2 Boot enumerates."
     },
     {
       "id": "C5",
@@ -48,17 +48,17 @@
       "id": "C6",
       "name": "fwSerialTouch (Linux)",
       "bar": "1200-baud touch drops a CPU into BOOTSEL on the real board",
-      "status": "pending",
-      "rounds": 0,
-      "note": ""
+      "status": "passed",
+      "rounds": 1,
+      "note": "PASS. Works as shipped on both CPUs; reset is the 1200-baud write alone, not DTR or close()."
     },
     {
       "id": "C7",
       "name": "fwHttp (Linux)",
       "bar": "dlopen libcurl remote-catalog fetch succeeds",
-      "status": "building",
-      "rounds": 1,
-      "note": "Round 1 found a bad_alloc process abort and an https->http redirect downgrade."
+      "status": "passed",
+      "rounds": 2,
+      "note": "PASS. bad_alloc process abort, redirect downgrade, and a 30s total cap that killed 16MB downloads."
     },
     {
       "id": "C8",
@@ -72,9 +72,9 @@
       "id": "C9",
       "name": "UI / rendering",
       "bar": "Renders under Xvfb; window icon, DPI, window-state restore",
-      "status": "pending",
-      "rounds": 0,
-      "note": ""
+      "status": "passed",
+      "rounds": 1,
+      "note": "PASS. Runs and renders correctly; window icon added; harness Wayland-leak hazard fixed."
     },
     {
       "id": "C10",
@@ -136,13 +136,6 @@
       "note": "all manifest entries survive; no silent drops"
     },
     {
-      "metric": "Tests",
-      "baseline": "466/494 (28 fail)",
-      "current": "517/2063 assn",
-      "target": "all green",
-      "note": "green with network, without network, and with libcurl unloadable"
-    },
-    {
       "metric": "Idle build",
       "baseline": "n/a",
       "current": "71 ms",
@@ -155,6 +148,27 @@
       "current": "4",
       "target": "see C10",
       "note": "libudev.so.1 is a hard DT_NEEDED -- 'one exe, no dependencies' not yet true on Linux"
+    },
+    {
+      "metric": "Tests",
+      "baseline": "466/494 (28 fail)",
+      "current": "524 / 2096 assn",
+      "target": "all green",
+      "note": "board-free: zero device state changes while running"
+    },
+    {
+      "metric": "App on Linux",
+      "baseline": "never launched",
+      "current": "runs, renders, detects board",
+      "target": "parity",
+      "note": "60fps, 198MB RSS, window mapped 91-95ms, clean exit 15/15"
+    },
+    {
+      "metric": "1200-baud BOOTSEL",
+      "baseline": "unverified",
+      "current": "works, both CPUs",
+      "target": "works",
+      "note": "incl. DISPLAY, which has no BOOTSEL button"
     }
   ],
   "log": [
@@ -272,6 +286,21 @@
       "t": "02:35",
       "who": "C7 builder",
       "msg": "libcurl: writeCb bad_alloc aborted the process; redirects unbounded and could downgrade https to http."
+    },
+    {
+      "t": "03:05",
+      "who": "C9 critic",
+      "msg": "PASS -- and caught that the display harness could have leaked onto the real monitors. Fixed."
+    },
+    {
+      "t": "03:35",
+      "who": "C6 builder",
+      "msg": "1200-baud touch works as shipped on both CPUs. Reset is the baud write alone."
+    },
+    {
+      "t": "03:48",
+      "who": "C6 critic",
+      "msg": "PASS. Reproduced every negative control; proved it works even from a hostile termios state."
     }
   ]
 }

@@ -20,7 +20,7 @@
   .track { height:10px; background:#21262d; border-radius:99px; overflow:hidden;
             margin:.6rem 0 .4rem; }
   .fill { height:100%; background:linear-gradient(90deg,#10b981,#58a6ff);
-           width:40%; transition:width .4s; }
+           width:70%; transition:width .4s; }
   .counts { display:flex; justify-content:space-between; font-size:.85rem;
              color:var(--dim); }
   table { width:100%; border-collapse:collapse; background:var(--panel);
@@ -58,13 +58,13 @@
 <h1>fwOGAppExplorer &mdash; Linux port</h1>
 <p class="sub">Builder/critic loop against the verified Windows build &middot; branch
   <code>linux-support</code> &middot; updated
-  2026-08-11 02:35</p>
+  2026-08-11 03:50</p>
 
 <div class="progress">
-  <strong>4 of 10 components passed</strong>
+  <strong>7 of 10 components passed</strong>
   <div class="track"><div class="fill"></div></div>
-  <div class="counts"><span>40% complete</span>
-    <span>C7 — fwHttp (round 2)</span></div>
+  <div class="counts"><span>70% complete</span>
+    <span>C4 — fwVolume (first real write to the board)</span></div>
 </div>
 
 <h2>Components</h2>
@@ -100,9 +100,9 @@
           <td class="id">C4</td>
           <td class="name">fwVolume (Linux)
             <div class="bar">RPI-RP2 discovery incl. not-auto-mounted case; write verified + flushed</div></td>
-          <td><span class="pill" style="--c:#6b7280">Pending</span></td>
+          <td><span class="pill" style="--c:#3b82f6">Builder</span></td>
           <td class="num">&mdash;</td>
-          <td class="note"></td>
+          <td class="note">RPI-RP2 auto-mounts via udisks2 2.27-2.40s after RP2 Boot enumerates.</td>
         </tr>
         <tr>
           <td class="id">C5</td>
@@ -116,17 +116,17 @@
           <td class="id">C6</td>
           <td class="name">fwSerialTouch (Linux)
             <div class="bar">1200-baud touch drops a CPU into BOOTSEL on the real board</div></td>
-          <td><span class="pill" style="--c:#6b7280">Pending</span></td>
-          <td class="num">&mdash;</td>
-          <td class="note"></td>
+          <td><span class="pill" style="--c:#10b981">Passed</span></td>
+          <td class="num">1</td>
+          <td class="note">PASS. Works as shipped on both CPUs; reset is the 1200-baud write alone, not DTR or close().</td>
         </tr>
         <tr>
           <td class="id">C7</td>
           <td class="name">fwHttp (Linux)
             <div class="bar">dlopen libcurl remote-catalog fetch succeeds</div></td>
-          <td><span class="pill" style="--c:#3b82f6">Builder</span></td>
-          <td class="num">1</td>
-          <td class="note">Round 1 found a bad_alloc process abort and an https-&gt;http redirect downgrade.</td>
+          <td><span class="pill" style="--c:#10b981">Passed</span></td>
+          <td class="num">2</td>
+          <td class="note">PASS. bad_alloc process abort, redirect downgrade, and a 30s total cap that killed 16MB downloads.</td>
         </tr>
         <tr>
           <td class="id">C8</td>
@@ -140,9 +140,9 @@
           <td class="id">C9</td>
           <td class="name">UI / rendering
             <div class="bar">Renders under Xvfb; window icon, DPI, window-state restore</div></td>
-          <td><span class="pill" style="--c:#6b7280">Pending</span></td>
-          <td class="num">&mdash;</td>
-          <td class="note"></td>
+          <td><span class="pill" style="--c:#10b981">Passed</span></td>
+          <td class="num">1</td>
+          <td class="note">PASS. Runs and renders correctly; window icon added; harness Wayland-leak hazard fixed.</td>
         </tr>
         <tr>
           <td class="id">C10</td>
@@ -209,13 +209,6 @@
           <td class="note">all manifest entries survive; no silent drops</td>
         </tr>
         <tr>
-          <td class="name">Tests</td>
-          <td class="num">466/494 (28 fail)</td>
-          <td class="num">517/2063 assn</td>
-          <td class="num">all green</td>
-          <td class="note">green with network, without network, and with libcurl unloadable</td>
-        </tr>
-        <tr>
           <td class="name">Idle build</td>
           <td class="num">n/a</td>
           <td class="num">71 ms</td>
@@ -228,11 +221,32 @@
           <td class="num">4</td>
           <td class="num">see C10</td>
           <td class="note">libudev.so.1 is a hard DT_NEEDED -- &#x27;one exe, no dependencies&#x27; not yet true on Linux</td>
+        </tr>
+        <tr>
+          <td class="name">Tests</td>
+          <td class="num">466/494 (28 fail)</td>
+          <td class="num">524 / 2096 assn</td>
+          <td class="num">all green</td>
+          <td class="note">board-free: zero device state changes while running</td>
+        </tr>
+        <tr>
+          <td class="name">App on Linux</td>
+          <td class="num">never launched</td>
+          <td class="num">runs, renders, detects board</td>
+          <td class="num">parity</td>
+          <td class="note">60fps, 198MB RSS, window mapped 91-95ms, clean exit 15/15</td>
+        </tr>
+        <tr>
+          <td class="name">1200-baud BOOTSEL</td>
+          <td class="num">unverified</td>
+          <td class="num">works, both CPUs</td>
+          <td class="num">works</td>
+          <td class="note">incl. DISPLAY, which has no BOOTSEL button</td>
         </tr></tbody>
 </table>
 
 <h2>Activity</h2>
-<ul class="log"><li><span class="ts">02:35</span><span class="who">C7 builder</span><span class="msg">libcurl: writeCb bad_alloc aborted the process; redirects unbounded and could downgrade https to http.</span></li><li><span class="ts">02:05</span><span class="who">integration</span><span class="msg">Corrected 4 &#x27;Linux never built&#x27; claims; unified EmbedResources with C2&#x27;s hashing; found libudev dependency.</span></li><li><span class="ts">01:40</span><span class="who">C5 critic</span><span class="msg">PASS. Reproduced usbId on real hardware; 0 regressions across 3.1M predicate inputs.</span></li><li><span class="ts">01:20</span><span class="who">integration</span><span class="msg">Re-measured after changes: 66 TUs recompiled, 0 warnings, ctest 1/1, 515 cases / 2058 assertions. Metrics table above still reads 503/503.</span></li><li><span class="ts">01:20</span><span class="who">integration</span><span class="msg">EmbedResources unified with EmbedFirmware: reproduced the stale-mtime hole on board-recovery.bmp, then the fix. Idle build 71 ms.</span></li><li><span class="ts">01:20</span><span class="who">integration</span><span class="msg">C5 deleted the only marker flagging fwSerialTouch/fwVolume as unverified. Restored, per-file, without touching their code.</span></li><li><span class="ts">01:20</span><span class="who">integration</span><span class="msg">fwPaths.cpp header still said fwSerialPorts.cpp &#x27;still carries&#x27; UNVERIFIED; C5 fixed one cite in that file and missed this one.</span></li><li><span class="ts">01:20</span><span class="who">integration</span><span class="msg">4 &#x27;Linux never compiled&#x27; claims now false (README, web/README, CMakeLists, hardware-verification) — fixed.</span></li><li><span class="ts">01:20</span><span class="who">integration</span><span class="msg">Cross-check of C1-C5: 6 file:line citations verified, all still correct.</span></li><li><span class="ts">01:05</span><span class="who">orchestrator</span><span class="msg">Removed all kernel-internals claims rather than guess a third time. C3 committed.</span></li><li><span class="ts">00:55</span><span class="who">C3 critic</span><span class="msg">FAIL round 3: kernel-history claim wrong (v5.18, not v4.15) — proved from tagged sources.</span></li><li><span class="ts">00:40</span><span class="who">C3 critic</span><span class="msg">FAIL round 2: 3 false comments incl. an invented header guarantee.</span></li><li><span class="ts">00:10</span><span class="who">C3 critic</span><span class="msg">FAIL round 1: AT_EXECFN tier speculative; comment claimed it covered a case it cannot.</span></li><li><span class="ts">23:30</span><span class="who">C2 critic</span><span class="msg">PASS round 3. Reproduced the hard case; verified ninja edge ordering and every doc claim.</span></li><li><span class="ts">23:28</span><span class="who">C2 builder</span><span class="msg">Embed now runs every build, hashing inputs itself. probe.uf2 covered too.</span></li><li><span class="ts">23:12</span><span class="who">C2 critic</span><span class="msg">FAIL round 2: hash stamp only recomputes at configure time; 3 more doc errors.</span></li><li><span class="ts">23:00</span><span class="who">C2 critic</span><span class="msg">FAIL round 1: flash_nuke provenance prose factually wrong; found mtime stale-embed hole.</span></li><li><span class="ts">22:45</span><span class="who">C2 builder</span><span class="msg">Confirmed all 28 failures were firmware absence, none Linux-specific. Sourced payloads.</span></li><li><span class="ts">22:20</span><span class="who">C1 critic</span><span class="msg">PASS. Verified all 7 claims; confirmed fresh-clone patch through a real FetchContent populate.</span></li><li><span class="ts">22:18</span><span class="who">C1 builder</span><span class="msg">Patched fwfinder &lt;functional&gt;; fixed 10 real warnings incl. 9 unreported in test_fwCpuIdentify.</span></li><li><span class="ts">21:52</span><span class="who">orchestrator</span><span class="msg">Design approved. Branch linux-support created; 10 components defined.</span></li><li><span class="ts">21:44</span><span class="who">orchestrator</span><span class="msg">Hardware confirmed present: 093c:2054 Main v87 + 093c:2055 Display v67 on /dev/ttyACM0-1.</span></li><li><span class="ts">21:42</span><span class="who">orchestrator</span><span class="msg">Baseline measured: configure clean, build fails at 113/559 in upstream fwfinder.</span></li></ul>
+<ul class="log"><li><span class="ts">03:48</span><span class="who">C6 critic</span><span class="msg">PASS. Reproduced every negative control; proved it works even from a hostile termios state.</span></li><li><span class="ts">03:35</span><span class="who">C6 builder</span><span class="msg">1200-baud touch works as shipped on both CPUs. Reset is the baud write alone.</span></li><li><span class="ts">03:05</span><span class="who">C9 critic</span><span class="msg">PASS -- and caught that the display harness could have leaked onto the real monitors. Fixed.</span></li><li><span class="ts">02:35</span><span class="who">C7 builder</span><span class="msg">libcurl: writeCb bad_alloc aborted the process; redirects unbounded and could downgrade https to http.</span></li><li><span class="ts">02:05</span><span class="who">integration</span><span class="msg">Corrected 4 &#x27;Linux never built&#x27; claims; unified EmbedResources with C2&#x27;s hashing; found libudev dependency.</span></li><li><span class="ts">01:40</span><span class="who">C5 critic</span><span class="msg">PASS. Reproduced usbId on real hardware; 0 regressions across 3.1M predicate inputs.</span></li><li><span class="ts">01:20</span><span class="who">integration</span><span class="msg">Re-measured after changes: 66 TUs recompiled, 0 warnings, ctest 1/1, 515 cases / 2058 assertions. Metrics table above still reads 503/503.</span></li><li><span class="ts">01:20</span><span class="who">integration</span><span class="msg">EmbedResources unified with EmbedFirmware: reproduced the stale-mtime hole on board-recovery.bmp, then the fix. Idle build 71 ms.</span></li><li><span class="ts">01:20</span><span class="who">integration</span><span class="msg">C5 deleted the only marker flagging fwSerialTouch/fwVolume as unverified. Restored, per-file, without touching their code.</span></li><li><span class="ts">01:20</span><span class="who">integration</span><span class="msg">fwPaths.cpp header still said fwSerialPorts.cpp &#x27;still carries&#x27; UNVERIFIED; C5 fixed one cite in that file and missed this one.</span></li><li><span class="ts">01:20</span><span class="who">integration</span><span class="msg">4 &#x27;Linux never compiled&#x27; claims now false (README, web/README, CMakeLists, hardware-verification) — fixed.</span></li><li><span class="ts">01:20</span><span class="who">integration</span><span class="msg">Cross-check of C1-C5: 6 file:line citations verified, all still correct.</span></li><li><span class="ts">01:05</span><span class="who">orchestrator</span><span class="msg">Removed all kernel-internals claims rather than guess a third time. C3 committed.</span></li><li><span class="ts">00:55</span><span class="who">C3 critic</span><span class="msg">FAIL round 3: kernel-history claim wrong (v5.18, not v4.15) — proved from tagged sources.</span></li><li><span class="ts">00:40</span><span class="who">C3 critic</span><span class="msg">FAIL round 2: 3 false comments incl. an invented header guarantee.</span></li><li><span class="ts">00:10</span><span class="who">C3 critic</span><span class="msg">FAIL round 1: AT_EXECFN tier speculative; comment claimed it covered a case it cannot.</span></li><li><span class="ts">23:30</span><span class="who">C2 critic</span><span class="msg">PASS round 3. Reproduced the hard case; verified ninja edge ordering and every doc claim.</span></li><li><span class="ts">23:28</span><span class="who">C2 builder</span><span class="msg">Embed now runs every build, hashing inputs itself. probe.uf2 covered too.</span></li><li><span class="ts">23:12</span><span class="who">C2 critic</span><span class="msg">FAIL round 2: hash stamp only recomputes at configure time; 3 more doc errors.</span></li><li><span class="ts">23:00</span><span class="who">C2 critic</span><span class="msg">FAIL round 1: flash_nuke provenance prose factually wrong; found mtime stale-embed hole.</span></li><li><span class="ts">22:45</span><span class="who">C2 builder</span><span class="msg">Confirmed all 28 failures were firmware absence, none Linux-specific. Sourced payloads.</span></li><li><span class="ts">22:20</span><span class="who">C1 critic</span><span class="msg">PASS. Verified all 7 claims; confirmed fresh-clone patch through a real FetchContent populate.</span></li><li><span class="ts">22:18</span><span class="who">C1 builder</span><span class="msg">Patched fwfinder &lt;functional&gt;; fixed 10 real warnings incl. 9 unreported in test_fwCpuIdentify.</span></li><li><span class="ts">21:52</span><span class="who">orchestrator</span><span class="msg">Design approved. Branch linux-support created; 10 components defined.</span></li><li><span class="ts">21:44</span><span class="who">orchestrator</span><span class="msg">Hardware confirmed present: 093c:2054 Main v87 + 093c:2055 Display v67 on /dev/ttyACM0-1.</span></li><li><span class="ts">21:42</span><span class="who">orchestrator</span><span class="msg">Baseline measured: configure clean, build fails at 113/559 in upstream fwfinder.</span></li></ul>
 
 <footer>Auto-refreshes every 30s. Generated by
   <code>tools/gen_progress.py</code> from
