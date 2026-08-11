@@ -69,6 +69,18 @@ VolumeState classifyVolumes(std::span<const std::string> volumes, bool weTouched
 
 GuardAction decideAction(VolumeState state, bool portIdentified, bool otherPortIdentified)
 {
+    // otherPortIdentified is read by no arm below, and that is the ANSWER this
+    // function now gives rather than an oversight: the elimination arm that was
+    // the only consumer of it was deliberately removed, because it reasoned
+    // about CPUs and not about boards (see the NOTE in fwVolumeState.h). The
+    // parameter stays because "the other CPU is running" remains a fact the
+    // caller has and this function is the place that decides what it is worth
+    // -- and because the test suite asserts, state by state, that it changes
+    // nothing. Drop the parameter and those assertions have nothing left to
+    // assert against, so the day someone reintroduces an elimination rule there
+    // would be no record that its absence was ever a decision.
+    (void)otherPortIdentified;
+
     switch (state) {
     // Two or more drives are only an ambiguity when the target could be one of
     // them. If the target CPU is running firmware it is in none of them, and
