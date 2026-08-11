@@ -126,6 +126,12 @@ struct WaitReporter {
     size_t            stepCount;
     TargetCpu         cpu;
     std::string       message;
+    /// The budget THIS wait runs against, defaulted so the touch and release
+    /// waits read unchanged. Carried here rather than read from a global at
+    /// the point of use, so the countdown a user watches always belongs to the
+    /// question actually being asked -- an erase wait reporting a touch's 30 s
+    /// would be a determinate bar being precise about the wrong number.
+    int               budgetMs = kVolumeWaitMs;
 
     /// The phase transition itself: emitted once, before the first poll, and
     /// the only one of these reports that reaches the scrolling log.
@@ -147,7 +153,7 @@ struct WaitReporter {
         p.message       = message;
         p.isRefresh     = refresh;
         p.waitElapsedMs = elapsedMs;
-        p.waitTotalMs   = kVolumeWaitMs;
+        p.waitTotalMs   = budgetMs;
         progress(p);
     }
 };
@@ -214,7 +220,7 @@ NewVolumeWait waitForNewVolume(const FlashIo& io, const std::vector<std::string>
         auto fresh = arrivals(io.findVolumes());
         if (fresh.size() >= 2) return { WaitOutcome::Ambiguous, {} };
         if (fresh.size() == 1) return { WaitOutcome::Ready, std::move(fresh.front()) };
-        if (waited >= kVolumeWaitMs) return { WaitOutcome::TimedOut, {} };
+        if (waited >= reporter.budgetMs) return { WaitOutcome::TimedOut, {} };
         if (!io.waitTick(kVolumePollMs)) return { WaitOutcome::Cancelled, {} };
         waited += kVolumePollMs;
         reporter.refresh(waited);
@@ -544,10 +550,14 @@ FlashResult runFlashPlan(const FlashIo& io,
             // same ambiguity check as every other wait; only the touch is
             // absent. If the volume is already there, the wait's first poll
             // sees it and returns immediately.
+            // kEraseRebootWaitMs, NOT kVolumeWaitMs: a full-chip erase takes
+            // just over a minute on this board, where a touch takes a second.
+            // See the measurements on that constant.
             const WaitReporter waiting{ progress, FlashPhase::WaitingForVolume, i, n,
                                         step.cpu,
                                         std::string("waiting for the erased ") + cpu +
-                                        " CPU to return as an RPI-RP2 volume" };
+                                        " CPU to return as an RPI-RP2 volume",
+                                        kEraseRebootWaitMs };
             // Delta-based like the touch wait, and for the same reason: the
             // drive we are waiting for is the one that ARRIVES, and any drive
             // already sitting there belongs to something else.

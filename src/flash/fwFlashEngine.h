@@ -131,9 +131,42 @@ struct FlashResult {
     bool resumable = false;
 };
 
-/// How long to wait for a volume after touching. A touch works in about a
+/// How long to wait for a volume after TOUCHING. A touch works in about a
 /// second or it did not work, so a longer wait only delays the error.
+/// Measured on Linux: the volume mounts 2.3-2.4 s after the rebooted CPU
+/// enumerates, so 30 s is roughly a tenfold margin.
 constexpr int kVolumeWaitMs     = 30000;
+
+/// How long to wait for an ERASED CPU to come back as a volume, which is a
+/// different question with a different answer, and conflating the two was a
+/// real defect rather than a tidy-up.
+///
+/// This budget used to be kVolumeWaitMs, whose 30 s is justified above by "a
+/// touch works in about a second". An erase is not a touch. flash_nuke erases
+/// the WHOLE flash chip and only then resets to the bootrom, and that duration
+/// is a property of the flash part, not of anything this program does.
+///
+/// MEASURED, on the DISPLAY CPU of a real FreeWili 1-OG, from the moment the
+/// erase image was written to the moment an RPI-RP2 volume was mounted again:
+///
+///     61.6 s   6.3 s   62.0 s   62.0 s   61.9 s
+///
+/// Four of five runs took just over a minute -- more than DOUBLE the old
+/// budget -- so the deprecated-firmware install (ERASE DISPLAY, WRITE DISPLAY,
+/// WRITE MAIN) could not succeed. It reported "the DISPLAY CPU was erased but
+/// never came back", correctly and uselessly, on a CPU it had just blanked and
+/// which has no BOOTSEL button. That is the worst failure this program has:
+/// not a wrong write, but a true statement that arrives after the damage and
+/// tells the user nothing they can act on. The CPU was in fact fine and
+/// returned about thirty seconds after the app stopped looking.
+///
+/// 150 s is ~2.4x the slowest observed. The margin is deliberately generous
+/// because the quantity is not ours to control: a board with a slower or
+/// larger flash part is entirely plausible, and the cost of being wrong in
+/// this direction is only that a genuinely dead CPU is declared dead later.
+/// The cost of being wrong in the other direction is what happened here.
+constexpr int kEraseRebootWaitMs = 150000;
+
 constexpr int kVolumePollMs     = 250;
 
 /// How much of ONE step is complete once `phase` has been reported, in 0..1.
