@@ -1,7 +1,9 @@
 #pragma once
 
+#include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace fwog {
@@ -11,13 +13,111 @@ struct SerialPortInfo {
     /// "COM69", "/dev/ttyACM0". Unique within one listSerialPortInfo() call
     /// on Windows, because a COM name identifies at most one attached device.
     std::string port;
-    /// The device instance id, upper-cased -- on Windows
-    /// "USB\VID_2E8A&PID_000A&MI_00\7&29198214&0&0000", which carries the USB
-    /// vendor/product/interface the port belongs to. EMPTY when the platform
-    /// cannot say (every non-Windows build today). Callers must treat empty as
-    /// "unknown", never as "not a match".
+    /// The USB identity of the device this port belongs to, in whatever
+    /// notation the platform natively speaks. The ONLY defined operation on it
+    /// is looksLikeProberUsbId() (fwCpuProbe.h), which understands every shape
+    /// produced here; nothing else may parse it, and the two shapes are NOT
+    /// comparable to each other.
+    ///
+    ///   Windows: the device instance id, upper-cased, e.g.
+    ///            "USB\VID_2E8A&PID_000A&MI_00\7&29198214&0&0000".
+    ///   Linux:   "usb:v2E8Ap000Ain00:3-4.1.1:1.0" -- the vendor id, product id
+    ///            and bInterfaceNumber sysfs reports for the USB interface the
+    ///            tty hangs off, followed by that interface's sysfs bus id.
+    ///
+    /// WHY THE LINUX FORM IS NOT MADE TO LOOK LIKE THE WINDOWS ONE. The tail of
+    /// a Windows instance id ("7&29198214&0&0000") is a Windows devnode path.
+    /// Linux has no such thing, so a string of that shape emitted here would
+    /// have an invented field in it, and the "USB\...&..." notation would claim
+    /// a provenance no Linux API can confirm. Every field of the form above can
+    /// be checked against the running machine instead: "2e8a:000a" is what
+    /// lsusb prints, and "3-4.1.1:1.0" names a real directory under
+    /// /sys/bus/usb/devices. The "v<vid>p<pid>...in<interface>" spelling is
+    /// borrowed from the kernel's own MODALIAS strings rather than invented.
+    /// The cost is that looksLikeProberUsbId() has two branches -- but it is a
+    /// pure function, so BOTH branches are compiled and tested on every
+    /// platform, and neither can rot unnoticed the way a platform-gated one
+    /// would.
+    ///
+    /// EMPTY when the platform cannot say -- the web build always, and on
+    /// Linux any port whose sysfs chain does not lead to a USB interface with
+    /// a readable idVendor/idProduct. Callers must treat empty as "unknown",
+    /// never as "not a match".
     std::string usbId;
 };
+
+/// The sysfs attributes a Linux usbId is built out of, each exactly as the
+/// kernel spells it in the corresponding file (trailing newline and all --
+/// makeLinuxUsbId() trims).
+struct LinuxUsbAttrs {
+    /// From <usb device>/idVendor, e.g. "093c". Four hex digits.
+    std::string idVendor;
+    /// From <usb device>/idProduct, e.g. "2054". Four hex digits.
+    std::string idProduct;
+    /// From <usb interface>/bInterfaceNumber, e.g. "00". Two hex digits, and
+    /// legitimately absent for a device that is not composite.
+    std::string bInterfaceNumber;
+    /// The USB interface's sysfs directory name, e.g. "3-4.1.1:1.0". Optional:
+    /// it makes the id name one physical port rather than a class of device,
+    /// which matters for reading a log, not for matching.
+    std::string busId;
+};
+
+/// Build the Linux form of SerialPortInfo::usbId from sysfs attributes.
+///
+/// Returns EMPTY -- "unknown" -- unless both idVendor and idProduct are
+/// present and are exactly four hex digits. A half-read identity is worse than
+/// no identity: looksLikeProberUsbId() would be asked to judge a string whose
+/// missing half it cannot see is missing, and the header's promise that empty
+/// means "the platform could not say" is the only thing that keeps "unknown"
+/// from being read as "not a match".
+///
+/// Exposed, and compiled on every platform rather than only on Linux, so that
+/// the one piece of this file with a format to get wrong is tested directly
+/// and is tested by the Windows build too.
+std::string makeLinuxUsbId(const LinuxUsbAttrs& attrs);
+
+/// Read the usbId for one /sys/class/tty/<name> directory, or "" if that tty
+/// has no USB device behind it.
+///
+/// THE WALK IS NOT A FIXED NUMBER OF "..", because the two drivers that matter
+/// do not put the tty at the same depth. Captured from the attached board:
+///
+///   ttyACM0  device -> .../3-4.1.1/3-4.1.1:1.0            (the USB interface)
+///   ttyUSB0  device -> .../3-4.1.3/3-4.1.3:1.0/ttyUSB0    (one level deeper)
+///
+/// cdc_acm hangs the tty off the interface directory itself; usb-serial
+/// inserts a port device in between. Hard-coding either depth gets the other
+/// driver's ports wrong, and gets them wrong SILENTLY -- an empty usbId reads
+/// as "unknown", so a wrong walk would quietly demote every FTDI-style port to
+/// unidentified rather than failing anywhere anyone would look. So it climbs
+/// until it finds a directory holding bInterfaceNumber -- the attribute that
+/// MEANS "this is a USB interface" -- and reads idVendor/idProduct from that
+/// directory's parent, which is the USB device. Bounded at four hops so that a
+/// tty on some bus nobody has thought about cannot walk out of /sys/devices
+/// and up into the root of the filesystem.
+///
+/// Takes the directory as an argument rather than reading /sys directly so
+/// that the walk can be tested against a FABRICATED tree -- both layouts
+/// above, and the ones that must produce "" -- without a board attached and
+/// without /sys existing at all. Nothing about it is Linux-specific except
+/// what it expects to find, so it is built and tested on every platform for
+/// the same reason makeLinuxUsbId() is.
+std::string usbIdForSysfsTtyDir(const std::filesystem::path& sysClassTtyEntry);
+
+/// Is `name` the name of a USB serial port device node -- "ttyACM" or "ttyUSB"
+/// followed by at least one digit and nothing else?
+///
+/// EXACT rather than a prefix test, which is what listSerialPortInfo() used to
+/// do. A prefix test accepts "ttyACMfoo" and "ttyUSB" with no number at all,
+/// and while nothing registers such a name today, the reason to be exact is
+/// that this predicate decides what gets OPENED. Both "ttyACM1" and "ttyACM10"
+/// are accepted, because both are real ports; there is no collision between
+/// them to resolve, only a distinction to preserve.
+///
+/// Exposed for the same reason as makeLinuxUsbId(): it is testable without a
+/// machine in any particular state, and it is compiled everywhere.
+bool isUsbSerialPortName(std::string_view name);
 
 /// Every serial port that is PRESENTLY ATTACHED, with the USB identity of the
 /// device behind it where the OS will say.
@@ -47,6 +147,16 @@ struct SerialPortInfo {
 /// fwfinder is concerned -- it is a bare CDC port with the stock Raspberry Pi
 /// VID:PID. A plain OS-level port list is both the correct question and the
 /// only one that can be asked safely from a worker.
+///
+/// ON LINUX THE SAME DISTINCTION APPLIES, one level down. This used to scan
+/// /dev for names beginning "ttyACM"/"ttyUSB", which is the same species of
+/// question as reading SERIALCOMM: /dev is a list of NAMES, and a name there
+/// answers "may this be opened", not "is a device behind it". /sys/class/tty is
+/// the kernel's list of tty devices that EXIST, and each entry carries a
+/// `device` symlink into the device tree -- which is both the more direct
+/// question and the only way to reach the USB identity at all. Asking /dev and
+/// then deriving the sysfs path anyway would be asking the same question twice
+/// and believing the weaker answer.
 ///
 /// Returns empty on any failure, and on the web build. A caller that cannot
 /// tell "no ports" from "could not look" must fail closed on both, and every
@@ -85,6 +195,15 @@ std::vector<std::string> dedupePortNames(std::vector<std::string> ports);
 /// which on the device side means the host has raised DTR. Without it the
 /// prober runs, probes, and prints into a void, and this function times out on
 /// a perfectly healthy board.
+///
+/// EVERY platform branch now ASKS for DTR rather than hoping for it. Windows
+/// does it twice (DTR_CONTROL_ENABLE in the DCB, then EscapeCommFunction
+/// SETDTR); Linux does it with TIOCMBIS. On the machine this was measured on,
+/// Linux happened to raise DTR by itself on every open of a cdc_acm port --
+/// but tcsetattr() was measured NOT to restore it once it was low, so nothing
+/// in the sequence this function performs would repair a port that came up
+/// without it. A contract the header states is one the code should assert, not
+/// one it should inherit from behaviour it never requested.
 std::optional<std::string> readSerialLine(const std::string& port, int timeoutMs);
 
 } // namespace fwog

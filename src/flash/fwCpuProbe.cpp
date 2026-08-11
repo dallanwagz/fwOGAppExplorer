@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
+#include <optional>
 
 namespace fwog {
 namespace {
@@ -138,6 +140,65 @@ const char* probeCpuName(TargetCpu cpu)
     return cpu == TargetCpu::Main ? "MAIN" : "DISPLAY";
 }
 
+namespace {
+
+/// What matchLinuxUsbId() found, if it found the Linux shape at all.
+struct LinuxUsbId {
+    std::string vid;     // "2E8A"
+    std::string pid;     // "000A"
+    std::string iface;   // "00", or empty when the id names no interface
+};
+
+bool hexRunAt(const std::string& s, std::size_t at, std::size_t n)
+{
+    if (s.size() < at + n) return false;
+    for (std::size_t i = 0; i < n; ++i)
+        if (!std::isxdigit((unsigned char)s[at + i])) return false;
+    return true;
+}
+
+/// Recognise the Linux form of SerialPortInfo::usbId in an ALREADY-UPPERCASED
+/// string: "USB:V<4 hex>P<4 hex>[IN<2 hex>][:<anything>]".
+///
+/// PARSED, not searched. A "contains VID_2E8A" style test is fine for the
+/// Windows shape because "VID_" pins where the digits are; here the digits sit
+/// against a one-letter marker, and "contains 2E8A" would match a serial number
+/// or a bus path that happened to spell it. The tail after the optional colon
+/// is the sysfs bus id and is deliberately unexamined -- it names WHICH port,
+/// which is not a question this predicate asks.
+///
+/// nullopt means "this is not that shape", which is how the caller knows to
+/// fall through to the Windows rules rather than to conclude anything.
+std::optional<LinuxUsbId> matchLinuxUsbId(const std::string& id)
+{
+    if (id.rfind("USB:V", 0) != 0) return std::nullopt;
+
+    std::size_t at = 5;   // past "USB:V"
+    if (!hexRunAt(id, at, 4)) return std::nullopt;
+    LinuxUsbId out;
+    out.vid = id.substr(at, 4);
+    at += 4;
+
+    if (at >= id.size() || id[at] != 'P') return std::nullopt;
+    ++at;
+    if (!hexRunAt(id, at, 4)) return std::nullopt;
+    out.pid = id.substr(at, 4);
+    at += 4;
+
+    if (id.compare(at, 2, "IN") == 0 && hexRunAt(id, at + 2, 2)) {
+        out.iface = id.substr(at + 2, 2);
+        at += 4;
+    }
+
+    // Anything left must be the bus-id separator. Refusing here rather than
+    // ignoring the tail is what stops "USB:V2E8AP000AGARBAGE" from being read
+    // as a match on the strength of its first thirteen characters.
+    if (at != id.size() && id[at] != ':') return std::nullopt;
+    return out;
+}
+
+} // namespace
+
 bool looksLikeProberUsbId(std::string_view deviceInstanceId)
 {
     // Empty means the platform could not say. That is not a match: absence of
@@ -147,6 +208,20 @@ bool looksLikeProberUsbId(std::string_view deviceInstanceId)
     std::string id;
     id.reserve(deviceInstanceId.size());
     for (char c : deviceInstanceId) id.push_back(char(std::toupper((unsigned char)c)));
+
+    // The Linux shape first, and only when it PARSES as that shape. Everything
+    // else -- including every Windows instance id, which cannot begin "USB:V"
+    // because the separator there is a backslash -- goes on to the rules below
+    // unchanged.
+    if (const auto linux_ = matchLinuxUsbId(id)) {
+        if (linux_->vid != kProbeUsbVidHex) return false;
+        if (linux_->pid != kProbeUsbPidHex) return false;
+        // Same rule as MI_ below, and for the same reason: an id that names no
+        // interface is accepted because the vendor/product pair is what
+        // identifies the device, and one that names interface 2 is refused
+        // because that is the Reset interface and cannot be read.
+        return linux_->iface.empty() || linux_->iface == "00";
+    }
 
     if (id.find(kProbeUsbVid) == std::string::npos) return false;
     if (id.find(kProbeUsbPid) == std::string::npos) return false;

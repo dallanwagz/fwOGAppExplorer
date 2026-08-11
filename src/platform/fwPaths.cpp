@@ -362,7 +362,10 @@ std::filesystem::path tempDir()
     // a relative path is a question this change is in no position to answer.
     // Applying the check there anyway would be changing verified-and-working
     // code on the strength of a guess about a library implementation read from
-    // memory -- the same trade fwSerialPorts.cpp:196-210 declines for usbId.
+    // memory. That is the same trade fwSerialPorts.cpp's Linux branch used to
+    // make about usbId, and it is worth noting why that one was reversed while
+    // this one stands: usbId became verifiable the moment a board was plugged
+    // in, and this does not become verifiable without a Windows machine.
     // The bounded consequence of leaving it: if a Windows user sets %TMP% to a
     // relative path that exists, staged firmware lands under the working
     // directory there. Nobody has reported it and it was not reproduced.

@@ -503,6 +503,7 @@ add_executable(fwog_tests
     tests/test_fwFlashController.cpp
     tests/test_fwSettingsIo.cpp
     tests/test_fwCpuProbe.cpp
+    tests/test_fwSerialPorts.cpp
 )
 target_link_libraries(fwog_tests PRIVATE fwog_core fwog_device fwog_platform fwog_flash doctest::doctest)
 

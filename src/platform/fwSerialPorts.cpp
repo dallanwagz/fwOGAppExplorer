@@ -2,7 +2,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 
@@ -11,11 +15,12 @@
   #include <devguid.h>
   #include <setupapi.h>
 #elif !defined(__EMSCRIPTEN__)
+  #include <cerrno>
   #include <fcntl.h>
+  #include <sys/ioctl.h>
   #include <termios.h>
   #include <unistd.h>
   #include <chrono>
-  #include <filesystem>
   #include <thread>
 #endif
 
@@ -32,7 +37,119 @@ std::string stripEol(std::string s)
     return s;
 }
 
+/// Sysfs attribute files end in a newline; nothing else here wants it.
+std::string trimmed(std::string_view s)
+{
+    std::size_t b = 0, e = s.size();
+    while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
+    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
+    return std::string(s.substr(b, e - b));
+}
+
+bool isHexRun(std::string_view s, std::size_t n)
+{
+    if (s.size() != n) return false;
+    for (char c : s)
+        if (!std::isxdigit(static_cast<unsigned char>(c))) return false;
+    return true;
+}
+
+std::string uppered(std::string s)
+{
+    for (char& c : s) c = char(std::toupper(static_cast<unsigned char>(c)));
+    return s;
+}
+
+/// Read the first line of a sysfs attribute file. Returns "" for anything that
+/// is not a readable file, which is the same answer as "the attribute is not
+/// there" -- and it has to be the same answer, because the difference between
+/// "absent" and "unreadable" is not one any caller here could act on
+/// differently: both mean the identity cannot be stated.
+std::string readSysfsAttr(const std::filesystem::path& p)
+{
+    std::ifstream in(p);
+    if (!in) return {};
+    std::string s;
+    std::getline(in, s);
+    return s;
+}
+
 } // namespace
+
+std::string makeLinuxUsbId(const LinuxUsbAttrs& attrs)
+{
+    const std::string vid = trimmed(attrs.idVendor);
+    const std::string pid = trimmed(attrs.idProduct);
+    // Four hex digits each, or this is not a USB vendor/product pair and
+    // saying so would be worse than saying nothing -- see the header.
+    if (!isHexRun(vid, 4) || !isHexRun(pid, 4)) return {};
+
+    // Uppercase hex, matching the kernel's own MODALIAS spelling
+    // ("usb:v2E8Ap000A..."), so that the borrowed notation is borrowed exactly.
+    std::string id = "usb:v" + uppered(vid) + "p" + uppered(pid);
+
+    // A non-composite device has no interface number, and that absence is
+    // information rather than a failure: looksLikeProberUsbId() accepts an id
+    // that names no interface, and refuses one that names the WRONG interface.
+    // Emitting "in" with nothing after it, or a made-up "in00", would turn the
+    // first case into the second.
+    const std::string iface = trimmed(attrs.bInterfaceNumber);
+    if (isHexRun(iface, 2)) id += "in" + uppered(iface);
+
+    // The sysfs bus id is what makes this name one PHYSICAL port rather than a
+    // class of device -- two identical boards plugged in at once share every
+    // field before it and differ only here. It is never matched on: the
+    // predicate stops at this colon.
+    //
+    // Nothing prints usbId today, so this suffix has no consumer, and that is a
+    // deliberate choice rather than an oversight. Dropping it would make the id
+    // of two identical boards identical, which is the one property that would
+    // turn "which port is this" from answerable into unanswerable -- and it
+    // would be dropped precisely when it is cheapest to keep and restored only
+    // after someone had already been misled by an ambiguous id in a bug report.
+    // It costs the length of a sysfs directory name.
+    const std::string bus = trimmed(attrs.busId);
+    if (!bus.empty()) id += ":" + bus;
+    return id;
+}
+
+std::string usbIdForSysfsTtyDir(const std::filesystem::path& sysClassTtyEntry)
+{
+    std::error_code ec;
+    auto dir = std::filesystem::canonical(sysClassTtyEntry / "device", ec);
+    // No `device` symlink at all: a pty, or a port that vanished between the
+    // directory listing and this call. Either way the honest answer is
+    // "unknown", not a guess.
+    if (ec) return {};
+
+    for (int hop = 0; hop < 4; ++hop) {
+        LinuxUsbAttrs attrs;
+        attrs.bInterfaceNumber = readSysfsAttr(dir / "bInterfaceNumber");
+        if (!attrs.bInterfaceNumber.empty()) {
+            attrs.busId     = dir.filename().string();
+            attrs.idVendor  = readSysfsAttr(dir.parent_path() / "idVendor");
+            attrs.idProduct = readSysfsAttr(dir.parent_path() / "idProduct");
+            // makeLinuxUsbId() returns "" if the vendor/product pair did not
+            // read back as four hex digits each, and "" is the truth then.
+            return makeLinuxUsbId(attrs);
+        }
+        if (!dir.has_parent_path() || dir.parent_path() == dir) break;
+        dir = dir.parent_path();
+    }
+    return {};   // reached the bound without finding a USB interface
+}
+
+bool isUsbSerialPortName(std::string_view name)
+{
+    std::string_view digits;
+    if (name.rfind("ttyACM", 0) == 0)      digits = name.substr(6);
+    else if (name.rfind("ttyUSB", 0) == 0) digits = name.substr(6);
+    else return false;
+    if (digits.empty()) return false;
+    for (char c : digits)
+        if (!std::isdigit(static_cast<unsigned char>(c))) return false;
+    return true;
+}
 
 std::vector<std::string> dedupePortNames(std::vector<std::string> ports)
 {
@@ -193,29 +310,58 @@ std::optional<std::string> readSerialLine(const std::string&, int) { return std:
 
 #else
 
-// UNVERIFIED: no Linux toolchain exists on the machine this was written on, so
-// nothing below has been compiled or run. Same status as the other POSIX
-// branches in this project (see fwSerialTouch.cpp, fwVolume.cpp) and flagged
-// for the same reason.
+// WAS UNVERIFIED, NOW MEASURED. When this branch was written no Linux
+// toolchain existed on the developer's machine, so usbId was left EMPTY
+// deliberately: deriving it means walking sysfs, and writing unverifiable code
+// whose whole job is to identify which CPU may be written to was the wrong
+// trade. That reason has expired. Everything below has been compiled with GCC
+// and run against an attached FreeWili 1-OG (093c:2054 MainCPU and 093c:2055
+// DisplayCPU, two cdc_acm ports) with an unrelated FTDI 0403:6014 on the same
+// hub, and the sysfs layout described in the comments was read off that
+// machine rather than assumed.
 //
-// usbId is left EMPTY here, deliberately and not as an oversight. Deriving it
-// would mean walking /sys/class/tty/<name>/device/.. for idVendor/idProduct,
-// and this branch has never been compiled, let alone run against a board --
-// writing unverifiable code whose whole job is to identify which CPU may be
-// written to would be the wrong trade. The consequence is bounded and
-// documented at the caller: with no USB identity, identifyCpus() falls back to
-// ordering candidates by "appeared since we wrote", and still refuses unless
-// one of them speaks the prober's protocol. /dev names are also not reused the
-// way COM numbers are, so the failure this fix exists to close does not arise
-// here in the same form.
+// WHAT WAS *NOT* VERIFIED, and must not be read as verified: no board running
+// the PROBER image (2E8A:000A) was attached while this was written, because
+// getting one into that state means the 1200-baud reset path and that belongs
+// to a different change. So the prober's own usbId string has never been
+// observed coming out of this function. What HAS been checked is that the
+// three real devices present produce ids that looksLikeProberUsbId() refuses,
+// and that a synthesised 2E8A:000A id of exactly the shape this function
+// builds is accepted -- see tests/test_fwSerialPorts.cpp.
+
 std::vector<SerialPortInfo> listSerialPortInfo()
 {
     std::vector<SerialPortInfo> ports;
     std::error_code ec;
-    for (const auto& entry : std::filesystem::directory_iterator("/dev", ec)) {
-        const std::string name = entry.path().filename().string();
-        if (name.rfind("ttyACM", 0) == 0 || name.rfind("ttyUSB", 0) == 0)
-            ports.push_back(SerialPortInfo{ entry.path().string(), std::string{} });
+
+    // /sys/class/tty, not /dev -- see the header for why the difference is the
+    // same one that made SERIALCOMM the wrong question on Windows.
+    std::filesystem::directory_iterator it("/sys/class/tty", ec);
+    if (ec) return ports;   // could not look: fail closed, as documented
+
+    const std::filesystem::directory_iterator end;
+    while (it != end) {
+        const std::string name = it->path().filename().string();
+        if (isUsbSerialPortName(name)) {
+            // The caller is handed something it can open, and /dev/<name> is
+            // what that is. Checking it exists is not paranoia: /sys/class/tty
+            // is populated by the kernel and /dev by udev, so there is a real
+            // (if brief) window in which the kernel knows about a port and no
+            // node has been created for it, and handing back a path that
+            // cannot be opened would spend one of identifyCpus()'s bounded
+            // port questions on nothing.
+            const std::string dev = "/dev/" + name;
+            std::error_code existsEc;
+            if (std::filesystem::exists(dev, existsEc) && !existsEc)
+                ports.push_back(SerialPortInfo{ dev, usbIdForSysfsTtyDir(it->path()) });
+        }
+        // The error_code overload of increment(), because the throwing one is
+        // what a range-for uses and this runs on a worker thread inside a
+        // function documented to "return empty on any failure" -- an escaping
+        // filesystem_error would be neither. A device unplugged mid-listing is
+        // exactly how this fails in practice.
+        it.increment(ec);
+        if (ec) return {};   // could not finish looking: same answer as could not look
     }
     return ports;
 }
@@ -242,11 +388,34 @@ std::optional<std::string> readSerialLine(const std::string& port, int timeoutMs
         return std::nullopt;
     }
 
+    // DTR asserted EXPLICITLY, which is what the Windows branch has always done
+    // and this branch did not. The header says why it is load-bearing: without
+    // it pico_stdio_usb never writes and a healthy board reads as silent.
+    //
+    // MEASURED on the machine this was written on (cdc_acm, an attached
+    // FreeWili 1-OG), with TIOCMGET before and after each step:
+    //   * open() came back with DTR and RTS already high, both with and without
+    //     O_NONBLOCK, on a first open and on a second open taken while another
+    //     fd held the same port with DTR pulled low;
+    //   * the tcsetattr() above neither dropped DTR nor raised it -- a port
+    //     whose DTR was low before it stayed low after;
+    //   * TIOCMBIS raised it in every case.
+    // So on that kernel this ioctl changes nothing observable. It is here
+    // because the second measurement is the one that matters: nothing in the
+    // sequence above would REPAIR a low DTR, so without this the contract holds
+    // only for as long as open() keeps volunteering something this code never
+    // asked for. Its return value is not checked for the same reason
+    // EscapeCommFunction's is not on Windows -- a port that refuses the ioctl
+    // may still be readable, and the read below is the real test.
+    int modemBits = TIOCM_DTR | TIOCM_RTS;
+    ::ioctl(fd, TIOCMBIS, &modemBits);
+
     const auto start = std::chrono::steady_clock::now();
     std::string line;
     for (;;) {
         char buf[128];
         const auto n = ::read(fd, buf, sizeof(buf));
+        const bool interrupted = (n < 0 && errno == EINTR);
         for (ssize_t i = 0; i < n; ++i) {
             if (buf[i] == '\n') {
                 ::close(fd);
@@ -254,10 +423,25 @@ std::optional<std::string> readSerialLine(const std::string& port, int timeoutMs
             }
             if (line.size() < 4096) line.push_back(buf[i]);
         }
+        // Checked every pass, including the passes where read() DID return
+        // data: a device that streams bytes forever and never a newline must
+        // hit the caller's budget like any other, and a loop that only checked
+        // the clock on empty reads would never leave.
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - start).count();
         if (elapsed >= timeoutMs) break;
-        if (n <= 0) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // The fd is still O_NONBLOCK from the open, so read() returns EAGAIN
+        // immediately rather than honouring VTIME, and this sleep is what
+        // actually paces the loop -- 20 ms against the 2 s slices
+        // identifyCpus() asks for (kProbeLineWaitMs / kProbeLineAttempts).
+        //
+        // EINTR is exempted because it means "ask again", not "no data": a
+        // signal is not evidence about the device and should not cost a sleep.
+        // The exemption is placed AFTER the timeout check on purpose -- a
+        // `continue` above it would let a stream of signals keep this loop
+        // alive past the caller's budget, on a worker thread, forever.
+        if (n <= 0 && !interrupted)
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     ::close(fd);
     return std::nullopt;
