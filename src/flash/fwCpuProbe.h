@@ -240,17 +240,38 @@ inline constexpr const char* kProbeBuildScriptSha256 =
 // both stale and current at once cannot carry the answer; the device's own
 // identity can.
 
-/// USB vendor id the prober enumerates with (Raspberry Pi RP2).
+/// USB vendor id the prober enumerates with (Raspberry Pi RP2), spelled the way
+/// a Windows device instance id spells it.
 inline constexpr const char* kProbeUsbVid = "VID_2E8A";
 /// USB product id the prober enumerates with (pico_stdio_usb CDC + reset).
 inline constexpr const char* kProbeUsbPid = "PID_000A";
+/// The same two numbers, bare, as sysfs and lsusb print them. The Linux form of
+/// SerialPortInfo::usbId carries no "VID_"/"PID_" prefixes to match against --
+/// see fwSerialPorts.h for why it does not pretend to. A test asserts these
+/// stay the same numbers as the two above, because two spellings of one fact
+/// are two things that can drift.
+inline constexpr const char* kProbeUsbVidHex = "2E8A";
+inline constexpr const char* kProbeUsbPidHex = "000A";
 
-/// Could a port with this device instance id be the prober's CDC?
+/// Could a port with this USB identity be the prober's CDC?
 ///
 /// Requires the vendor and product ids, and -- when the id names a composite
 /// interface at all -- requires it to be interface 0, the CDC. Interface 2 is
 /// pico_stdio_usb's Reset interface and is not a serial port; matching it would
 /// mean offering something that cannot be read as a candidate to read.
+///
+/// UNDERSTANDS BOTH SHAPES listSerialPortInfo() produces, and the reason it has
+/// to is argued at SerialPortInfo::usbId in fwSerialPorts.h:
+///
+///   Windows  USB\VID_2E8A&PID_000A&MI_00\7&29198214&0&0000
+///   Linux    usb:v2E8Ap000Ain00:3-4.1.1:1.0
+///
+/// The Linux shape is recognised by parsing it, not by looking for substrings
+/// in it, and a string that does not parse as that shape is judged by the
+/// Windows rules exactly as it was before the shape existed. So the two
+/// branches cannot answer for each other's inputs. Both are compiled and tested
+/// on every platform -- this is a pure function, and a platform-gated branch is
+/// a branch that rots.
 ///
 /// This is a NECESSARY condition, never a sufficient one. Any other RP2040
 /// running pico_stdio_usb presents exactly this identity, so a match only earns

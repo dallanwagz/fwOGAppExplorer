@@ -9,7 +9,6 @@
 #include <imgui.h>
 #include <IconsMaterialDesign.h>
 
-#include <algorithm>
 #include <string>
 
 namespace fwog {
@@ -43,7 +42,7 @@ If BOTH CPUs are erased, there is no drive to unmount -- an RP2040 with blank fl
 
 The Identify CPUs action below is the way out of that state, and only that state. The Default Firmware tab's two install buttons now run this same identification THEMSELVES when a click needs it, so getting out no longer requires finding this page first; the button below stays for running it deliberately and for reading what it found. It works because the drives are not actually identical -- only their labels are. The CC1101 sub-GHz radio is wired to the MAIN CPU only, so a small image that probes for the radio and reports what it found can tell you which CPU it is running on. Writing it to one of the two drives makes that drive's CPU reboot into the prober, which both answers the question and removes that drive from the picture; the drive still mounted is the other CPU, by elimination.
 
-That image is the one thing this app will write to a CPU it has not identified, and it is safe to do so for one specific reason: it never configures or drives GPIO 29. GPIO 29 is the PDM microphone's output on the DISPLAY CPU and FPGA_RESET on the MAIN CPU, and a main image driving it on the DISPLAY CPU is precisely the damage every other refusal here exists to prevent. Nothing else in this app is permitted to reach an unidentified CPU, and clicking Flash with two drives mounted still refuses, exactly as it did before -- the answer this produces is only ever about ONE drive, so a second one appearing beside it discards the answer rather than extending it.
+That image is the one thing this app will write to a CPU it has not identified, and it is safe to do so for one specific reason: it never configures or drives GPIO 29. GPIO 29 is the PDM microphone's output on the DISPLAY CPU and FPGA_RESET on the MAIN CPU, and a main image driving it on the DISPLAY CPU is precisely the damage every other refusal here exists to prevent. Nothing else in this app is permitted to reach an UNIDENTIFIED CPU, and the answer this prober produces is only ever about ONE drive, so a second one appearing beside it discards the answer rather than extending it. Two mounted drives are not automatically unidentified, though, and it is worth being exact about that rather than reassuring: on a FreeWili both CPUs sit on the board's own internal USB hub, that position identifies each drive on its own, and Flash then proceeds without asking. What the refusal protects is the case where no such identity exists -- which is why this prober exists at all.
 
 Once the answer is in, that drive is no longer unidentified, and the app treats it accordingly. Firmware for the CPU it belongs to is written straight to it -- no 1200-baud reboot (there is nothing running on a CPU in its bootloader to reboot, and it is already where a reboot would put it) and no typed CPU name. That is not the confirmation being waived: the confirmation exists because a mount carries no evidence of which CPU it is, and a probe result is exactly that evidence, measured off the radio rather than read off a USB string. The same knowledge refuses in the other direction too -- firmware for the OTHER CPU is now rejected outright instead of being offered a confirmation box, which is a case that used to be accepted and should not have been.
 
@@ -160,8 +159,6 @@ const int kRecoverySectionCount = static_cast<int>(sizeof(kRecoverySections) / s
 namespace {
 
 const ImVec4 kMutedColor { 0.65f, 0.65f, 0.65f, 1.00f };
-const ImVec4 kErrorColor { 0.95f, 0.35f, 0.35f, 1.00f };
-const ImVec4 kOkColor    { 0.45f, 0.85f, 0.45f, 1.00f };
 const ImVec4 kWarnColor  { 0.90f, 0.65f, 0.15f, 1.00f };
 
 void wrappedColored(const ImVec4& color, const std::string& text)
@@ -169,34 +166,6 @@ void wrappedColored(const ImVec4& color, const std::string& text)
     ImGui::PushStyleColor(ImGuiCol_Text, color);
     ImGui::TextWrapped("%s", text.c_str());
     ImGui::PopStyleColor();
-}
-
-/// Why the Identify CPUs button is not available, or empty when it is.
-///
-/// Every one of these is a precondition of the by-elimination step being SOUND,
-/// not a convenience check:
-///  - Exactly two volumes, because the conclusion is "the one that is left".
-///  - At most one FreeWili connected, because two boards with one erased CPU
-///    each also produce two RPI-RP2 volumes, and writing the prober to one
-///    board's volume says nothing whatsoever about the other board's. This is
-///    the one precondition the flow itself cannot check -- identifyCpus() sees
-///    volumes and ports, not boards -- so it is checked here, where the device
-///    list is.
-std::string identifyDisabledReason(const std::vector<std::string>& volumes,
-                                    const DeviceModel& deviceModel)
-{
-    if (!kDeviceSupportAvailable)
-        return std::string(platformLimitationNotice());
-    if (deviceModel.devices().size() > 1)
-        return "More than one FreeWili is connected. Two boards can present two RPI-RP2 "
-               "volumes between them, and the prober's answer would then say nothing about "
-               "the other board's drive. Unplug all but the board you are recovering.";
-    if (volumes.size() != 2)
-        return "This needs exactly two RPI-RP2 volumes mounted; " +
-               std::to_string(volumes.size()) + " " + (volumes.size() == 1 ? "is" : "are") +
-               " mounted right now. With one, the flash dialog already asks you to type the "
-               "CPU name instead.";
-    return {};
 }
 
 } // namespace
@@ -301,6 +270,7 @@ void TabRecovery::refreshVolumes()
 {
     if (!dueFor(m_volumesPolledAt, kPollIntervalMs)) return;
     m_volumes = findRpiRp2Volumes();
+    m_bootselDevices = countBootselDevices();
 }
 
 void TabRecovery::refreshPorts()
@@ -317,15 +287,57 @@ void TabRecovery::draw(DeviceModel& deviceModel, const std::function<void(int)>&
     // half that only this tab reads, so it is read only while this tab draws.
     refreshPorts();
 
-    // onGoToTab is unused now that the tab is two procedures and a photograph:
-    // the "you can flash that CPU now" jump belonged to the identification
-    // panel this tab no longer draws. The parameter stays because App::run()
-    // owns the tab bar and would have to be changed back the moment anything
-    // here needs to send the user somewhere.
+    // onGoToTab is unused now that the tab is a live readout, two procedures and
+    // a photograph: the "you can flash that CPU now" jump belonged to the
+    // identification panel this tab no longer has. The parameter stays because
+    // App::run() owns the tab bar and would have to be changed back the moment
+    // anything here needs to send the user somewhere. deviceModel likewise: the
+    // body reads none of it, but beginIdentify() -- called from the Default
+    // Firmware tab -- does.
     (void)deviceModel;
     (void)onGoToTab;
 
     ImGui::BeginChild("##RecoveryBody", ImVec2(0, 0), ImGuiChildFlags_Border);
+
+    // --- 0. What the app can see, before it tells anyone what to do ---------
+    //
+    // FIRST, above the instructions, and that placement is the point rather
+    // than a layout preference. Everything below this is "here is how to put a
+    // CPU into BOOTSEL", and the one state this readout exists to name is the
+    // one where the user has ALREADY DONE THAT and the app still cannot see a
+    // drive. Telling them to hold the red button again, when the CPU is sitting
+    // in the bootrom exactly as instructed and the only thing missing is a
+    // mount, sends them round a loop that cannot terminate. So the contradiction
+    // has to arrive before the instruction it contradicts.
+    //
+    // It is also the acknowledgement half of the two procedures below: after
+    // following one, this line is where you find out whether it worked, without
+    // leaving the page that told you to do it.
+    ImGui::SeparatorText(ICON_MD_USB " What the app can see right now");
+    ImGui::Indent();
+    {
+        std::string mounted;
+        for (const auto& v : m_volumes) {
+            if (!mounted.empty()) mounted += ", ";
+            mounted += v;
+        }
+        ImGui::TextColored(kMutedColor, "Mounted RPI-RP2 drives: %s",
+                           mounted.empty() ? "(none)" : mounted.c_str());
+
+        // "(none)" is the same two words for two very different situations, and
+        // this tab is where both of them send the user. A CPU sitting in BOOTSEL
+        // that nothing mounted looks exactly like no board attached -- the drive
+        // is there, the app simply cannot see it. Measured on Linux by
+        // unmounting the volume out from under a board in BOOTSEL: every path
+        // went quiet and nothing said why. Empty on Windows, which mounts it
+        // itself, so the line above is the whole readout there.
+        if (const std::string notice =
+                detail::unmountedBootselNotice(m_bootselDevices, m_volumes.size());
+            !notice.empty())
+            wrappedColored(kWarnColor, std::string(ICON_MD_WARNING " ") + notice);
+    }
+    ImGui::Unindent();
+    ImGui::Spacing();
 
     ImGui::TextWrapped("There are exactly two ways to put a FreeWili CPU into its bootloader "
                        "by hand. Both make that CPU appear as an RPI-RP2 drive, which is what "
@@ -335,11 +347,24 @@ void TabRecovery::draw(DeviceModel& deviceModel, const std::function<void(int)>&
     // --- 1. MAIN --------------------------------------------------------
     ImGui::SeparatorText(ICON_MD_MEMORY " MAIN CPU -- the red button");
     ImGui::Indent();
-    ImGui::TextWrapped("Disconnect the battery, then plug the board into USB with the red "
-                       "button held down.");
-    ImGui::TextColored(kMutedColor, "The battery has to come out: with it connected the board "
-                                     "never actually powers down, so the button is not being "
-                                     "read at the moment that decides this.");
+    // The procedure that actually worked on hardware, in the order it worked
+    // in. This used to say "disconnect the battery, then plug in with the red
+    // button held", which is true and asks the user to open the case. The red
+    // button can power the board down on its own, and the internal LED says
+    // when it has -- so the whole thing is doable with the case shut, and the
+    // LED gives the user something to WAIT FOR rather than a duration to
+    // guess at.
+    //
+    // Keep the battery sentence: it is the fallback when the LED never
+    // settles, and it is the reason any of this is necessary.
+    ImGui::TextWrapped("Unplug USB. Hold the red button down until the internal LED stops "
+                       "blinking -- that is the board actually powering off. Keep holding it, "
+                       "and plug USB back in.");
+    ImGui::TextColored(kMutedColor, "Wait for the LED rather than counting: until the board is "
+                                     "really off, the button is not being read at the moment "
+                                     "that decides this, and a replug that merely looks like a "
+                                     "power cycle is not one. If the LED never stops, "
+                                     "disconnecting the battery does the same job.");
     ImGui::Unindent();
     ImGui::Spacing();
 
@@ -352,6 +377,17 @@ void TabRecovery::draw(DeviceModel& deviceModel, const std::function<void(int)>&
     ImGui::TextColored(kMutedColor, "The pad and a ground point are both marked on the board "
                                      "below.");
     ImGui::Unindent();
+    ImGui::Spacing();
+
+    // --- 3. The one that is not a physical act --------------------------
+    // Before the photograph, not after it. The photograph is 519px of
+    // reference material for procedure 2, and anything placed below it is
+    // past a full screen of picture -- which is where a control goes to be
+    // never found. All three ways into a bootloader now sit together, and the
+    // diagram closes the page as the appendix it is. "marked on the board
+    // below" above still reads correctly: this node is collapsed by default
+    // and occupies one line.
+    drawStuckProber();
     ImGui::Spacing();
 
     // --- The board ------------------------------------------------------
@@ -375,197 +411,56 @@ void TabRecovery::draw(DeviceModel& deviceModel, const std::function<void(int)>&
     ImGui::EndChild();
 }
 
-void TabRecovery::drawWhatIsNowPossible(const IdentifyResult& result,
-                                        const std::function<void(int)>& onGoToTab)
+/// The third way into a bootloader, and the only one that is not a physical act:
+/// open a port at 1200 baud. It is here because it is the way BACK from the CPU
+/// probe, and the probe is still live -- the Default Firmware tab's install
+/// buttons run one themselves (autoIdentifyDecision(), ProbeAccess) whenever a
+/// click cannot proceed without it.
+///
+/// Without this, that flow can create a dead end. A CPU left running the prober
+/// publishes no FWOG_* product string, so the ordinary flash path cannot
+/// identify it and cannot reboot it, and a successful IdentifyResult is
+/// otherwise the only thing that ever knew its port. Closing the app, or
+/// cancelling, between the write and the answer strands it.
+///
+/// It reached the screen from nowhere until now: it lived inside
+/// drawIdentifyPanel(), which had no call sites (see the class comment). Moving
+/// it into the live body rather than deleting it with the rest of that panel is
+/// the whole reason m_ports is still read.
+void TabRecovery::drawStuckProber()
 {
-    const char* cpu = probeCpuName(result.remainingCpu);
-    const bool display = (result.remainingCpu == TargetCpu::Display);
-
     ImGui::Spacing();
-    ImGui::TextUnformatted(ICON_MD_BOLT " You can flash that CPU now");
-    // One line. What this measurement then permits and refuses is set out in
-    // full in this section's own prose above; repeating it here made the panel
-    // longer than the answer it was reporting.
-    ImGui::TextWrapped("%s is the %s CPU, measured. Firmware for the %s CPU writes straight "
-                       "to it; anything aimed at the other CPU is refused.",
-                       result.remainingVolume.c_str(), cpu, cpu);
+    if (!ImGui::TreeNode("A CPU is stuck running the CPU prober")) return;
 
-    ImGui::Spacing();
     ImGui::TextWrapped(
-        "%s", display
-            ? "Default Firmware -> FreeWili 1-OG installs the DISPLAY CPU's bootloader. "
-              "App Explorer's apps are MAIN-CPU images and are refused here."
-            : "App Explorer for an application image, or Default Firmware for the Original "
-              "FreeWili install. Either writes the MAIN CPU.");
-
-    ImGui::Spacing();
-    // The deep link. Two buttons rather than one guessed destination: which
-    // firmware someone wants is theirs to decide, and the sentence above
-    // already says which one fits. The recommended tab leads.
-    if (display) {
-        if (ImGui::Button(ICON_MD_OPEN_IN_NEW " Open Default Firmware")) onGoToTab(1);
-        ImGui::SameLine();
-        if (ImGui::Button(ICON_MD_OPEN_IN_NEW " Open App Explorer"))     onGoToTab(0);
-    } else {
-        if (ImGui::Button(ICON_MD_OPEN_IN_NEW " Open App Explorer"))     onGoToTab(0);
-        ImGui::SameLine();
-        if (ImGui::Button(ICON_MD_OPEN_IN_NEW " Open Default Firmware")) onGoToTab(1);
-    }
-
-    ImGui::Spacing();
+        "The prober honours the standard 1200-baud touch, so it is never a trap -- but "
+        "the app has to be told which port it is on. Pick the prober's port and reboot "
+        "it into its bootloader, then flash it as normal. The prober enumerates as "
+        "\"FWOG probe 002\" (FreeWili OG) if you need to check which port that is.");
     ImGui::TextColored(kMutedColor,
-        "Do this BEFORE the button below: bringing the other CPU back first puts a second "
-        "indistinguishable drive on the bus and everything refuses again.");
-}
+        "Only do this to a port you know is the prober. Rebooting an unrelated "
+        "RP2040-based device into its bootloader is recoverable, but it is not helpful.");
 
-void TabRecovery::drawIdentifyPanel(DeviceModel& deviceModel, const std::function<void(int)>& onGoToTab)
-{
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::TextUnformatted(ICON_MD_FINGERPRINT " Identify CPUs");
-    ImGui::Spacing();
-
-    std::string mounted;
-    for (const auto& v : m_volumes) {
-        if (!mounted.empty()) mounted += ", ";
-        mounted += v;
-    }
-    ImGui::TextColored(kMutedColor, "Mounted RPI-RP2 volumes: %s",
-                       mounted.empty() ? "(none)" : mounted.c_str());
-
-    const std::string reason = identifyDisabledReason(m_volumes, deviceModel);
-    const bool running = m_probe.state() == ProbeState::Running;
-
-    // --- The action -------------------------------------------------------
-    ImGui::BeginDisabled(!reason.empty() || running);
-    // beginIdentify() rather than an inline m_probe.begin(): the Default
-    // Firmware tab's install buttons start an identification too, and both
-    // must take the identity snapshot by the same rule.
-    if (ImGui::Button(ICON_MD_TROUBLESHOOT " Identify CPUs"))
-        beginIdentify(deviceModel);
-    ImGui::EndDisabled();
-
-    if (!reason.empty()) {
-        ImGui::SameLine();
-        wrappedColored(kErrorColor, reason);
-    }
-
-    if (running) {
-        ImGui::SameLine();
-        if (ImGui::Button(ICON_MD_CANCEL " Cancel"))
-            m_probe.cancel();
-    }
-
-    // --- What it has done so far ------------------------------------------
-    if (!m_probe.log().empty()) {
-        ImGui::Spacing();
-        ImGui::BeginChild("##IdentifyLog", ImVec2(0, 110), ImGuiChildFlags_Border);
-        for (const auto& line : m_probe.log())
-            ImGui::TextWrapped("%s", line.c_str());
-        ImGui::EndChild();
-    }
-
-    // --- The answer, and whether it is still an answer ---------------------
-    if (m_probe.state() == ProbeState::Finished) {
-        const IdentifyResult& r = m_probe.result();
-        if (r.outcome != IdentifyOutcome::Success) {
-            wrappedColored(kErrorColor, ICON_MD_WARNING " Not identified: " + r.message);
-        } else {
-            // Re-checked EVERY FRAME against the volumes as they are now, not
-            // recorded once when the answer arrived. A mapping is a claim about
-            // drive letters, and drive letters are reusable names -- see
-            // mappingStillFresh(), which this delegates to rather than
-            // re-deriving the rule here.
-            const MappingCheck check =
-                mappingStillFresh(r, m_volumes, m_probe.identificationAge());
-            if (check != MappingCheck::Fresh) {
-                wrappedColored(kErrorColor,
-                    std::string(ICON_MD_WARNING " This identification no longer applies. ") +
-                    mappingCheckMessage(check));
-            } else {
-                wrappedColored(kOkColor, std::string(ICON_MD_INFO " ") + r.message);
-                // Everything the answer is now GOOD FOR, including the way to
-                // go and use it. Stating a fact and stopping there is what made
-                // this feature unusable on the board it was written for.
-                drawWhatIsNowPossible(r, onGoToTab);
+    if (m_ports.empty()) {
+        ImGui::TextColored(kMutedColor, "No serial ports are present.");
+    } else {
+        if (m_selectedPort < 0 || m_selectedPort >= int(m_ports.size()))
+            m_selectedPort = 0;
+        ImGui::SetNextItemWidth(200);
+        if (ImGui::BeginCombo("##ProberPort", m_ports[size_t(m_selectedPort)].c_str())) {
+            for (int i = 0; i < int(m_ports.size()); ++i) {
+                const bool selected = (i == m_selectedPort);
+                if (ImGui::Selectable(m_ports[size_t(i)].c_str(), selected))
+                    m_selectedPort = i;
+                if (selected) ImGui::SetItemDefaultFocus();
             }
-
-            // Deliberately OUTSIDE the freshness branch above, and this is not
-            // a slip. The mapping and the port are two different facts with two
-            // different lifetimes: "which CPU is drive E:" is only true while
-            // the volumes are unchanged, whereas "the prober is on COM99" stops
-            // being true only when that port goes away. Gating this button on
-            // the mapping's freshness made it unreachable at exactly the moment
-            // it is needed -- flashing the remaining volume unmounts it, which
-            // invalidates the mapping, which is precisely the point at which
-            // the user is supposed to bring the prober's CPU back.
-            ImGui::Spacing();
-            const bool portPresent =
-                std::find(m_ports.begin(), m_ports.end(), r.proberPort) != m_ports.end();
-            // Sequencing, not safety: nothing is damaged by touching early, but
-            // touching while an RPI-RP2 volume is still mounted puts a second
-            // one back on the bus and returns the user to the exact state they
-            // are trying to leave.
-            const bool volumeStillMounted = !m_volumes.empty();
-
-            ImGui::BeginDisabled(!portPresent || volumeStillMounted);
-            if (ImGui::Button(ICON_MD_RESTART_ALT " Return the prober's CPU to BOOTSEL"))
-                m_probe.returnProberToBootsel();
-            ImGui::EndDisabled();
-            if (!portPresent) {
-                ImGui::SameLine();
-                wrappedColored(kMutedColor,
-                    "The prober's port (" + r.proberPort + ") is no longer present. If a CPU "
-                    "is still running the prober, use the port picker below.");
-            } else if (volumeStillMounted) {
-                ImGui::SameLine();
-                wrappedColored(kMutedColor,
-                    "Available once no RPI-RP2 volume is mounted -- flash " + r.remainingVolume +
-                    " first.");
-            }
+            ImGui::EndCombo();
         }
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_MD_RESTART_ALT " Reboot this port into BOOTSEL"))
+            touchPort1200(m_ports[size_t(m_selectedPort)]);
     }
-
-    // --- The way back if any of the above was interrupted ------------------
-    //
-    // Without this the flow could create a NEW dead end: a CPU left running the
-    // prober publishes no FWOG_* product string, so the ordinary flash path
-    // cannot identify it and cannot reboot it, and a successful result is
-    // otherwise the only thing that knows its port. Closing the app, or
-    // cancelling, between the write and the answer would strand it.
-    ImGui::Spacing();
-    if (ImGui::TreeNode("A CPU is stuck running the prober")) {
-        ImGui::TextWrapped(
-            "The prober honours the standard 1200-baud touch, so it is never a trap -- but "
-            "the app has to be told which port it is on. Pick the prober's port and reboot "
-            "it into its bootloader, then flash it as normal. The prober enumerates as "
-            "\"FWOG probe 002\" (FreeWili OG) in Device Manager if you need to "
-            "check which port that is.");
-        ImGui::TextColored(kMutedColor,
-            "Only do this to a port you know is the prober. Rebooting an unrelated "
-            "RP2040-based device into its bootloader is recoverable, but it is not helpful.");
-
-        if (m_ports.empty()) {
-            ImGui::TextColored(kMutedColor, "No serial ports are present.");
-        } else {
-            if (m_selectedPort < 0 || m_selectedPort >= int(m_ports.size()))
-                m_selectedPort = 0;
-            ImGui::SetNextItemWidth(200);
-            if (ImGui::BeginCombo("##ProberPort", m_ports[size_t(m_selectedPort)].c_str())) {
-                for (int i = 0; i < int(m_ports.size()); ++i) {
-                    const bool selected = (i == m_selectedPort);
-                    if (ImGui::Selectable(m_ports[size_t(i)].c_str(), selected))
-                        m_selectedPort = i;
-                    if (selected) ImGui::SetItemDefaultFocus();
-                }
-                ImGui::EndCombo();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button(ICON_MD_RESTART_ALT " Reboot this port into BOOTSEL"))
-                touchPort1200(m_ports[size_t(m_selectedPort)]);
-        }
-        ImGui::TreePop();
-    }
+    ImGui::TreePop();
 }
 
 void TabRecovery::scrollTo(RecoveryAnchor anchor)

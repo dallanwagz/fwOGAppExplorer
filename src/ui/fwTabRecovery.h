@@ -16,14 +16,14 @@ namespace fwog {
 
 class DeviceModel;
 
-/// The Recovery tab: the two ways to put a FreeWili CPU into its bootloader by
-/// hand, and a photograph of the board showing where the pads are.
+/// The Recovery tab: what the app can currently see, the two ways to put a
+/// FreeWili CPU into its bootloader by hand, a photograph of the board showing
+/// where the pads are, and the way back from a CPU left running the CPU prober.
 ///
-/// It is deliberately just those two procedures now. It previously rendered
-/// every section of kRecoverySections (fwRecoveryContent.h) as a collapsible
-/// header, keyed by RecoveryAnchor so a flash refusal could scrollTo() the
-/// explanation of what had just happened, and it hosted the Identify CPUs
-/// action inside the TwoVolumes section.
+/// It previously rendered every section of kRecoverySections
+/// (fwRecoveryContent.h) as a collapsible header, keyed by RecoveryAnchor so a
+/// flash refusal could scrollTo() the explanation of what had just happened, and
+/// it hosted the Identify CPUs action inside the TwoVolumes section.
 ///
 /// CONSEQUENCE, so nobody rediscovers it as a bug: scrollTo() still records an
 /// anchor and the flash dialog's "Open Recovery" still brings the user here,
@@ -34,6 +34,18 @@ class DeviceModel;
 /// and still driven by the Default Firmware tab's auto-identify (ProbeAccess),
 /// which is where it is actually reached from now that hub position names a
 /// bootrom drive without any probe at all.
+///
+/// THE PANEL IS GONE FROM THE CODE TOO, and that is a deliberate second step. Up
+/// to now the "just those two procedures" state above was true only at RUNTIME:
+/// drawIdentifyPanel() and drawWhatIsNowPossible() were still here, still
+/// compiled, and had ZERO CALL SITES -- private members nothing invoked. A
+/// reader (and a reviewer, and the author of the unmounted-BOOTSEL notice, which
+/// was added to that panel and therefore never rendered once) had every reason
+/// to take them for live UI. Dead private code that looks live is not neutral;
+/// it is a false map. The escape hatch that panel contained was moved into
+/// draw() -- it is the only part with no other home in the app and a live source
+/// of the state it recovers from -- and the rest was deleted. Nothing the user
+/// could reach was removed, because none of it was reachable.
 class TabRecovery {
 public:
     /// Draws the tab body for one frame. `deviceModel` is read, never mutated:
@@ -132,9 +144,11 @@ public:
     void scrollTo(RecoveryAnchor anchor);
 
 private:
-    void drawIdentifyPanel(DeviceModel& deviceModel, const std::function<void(int)>& onGoToTab);
-    /// The "you can now flash X" block, drawn only while the mapping is fresh.
-    void drawWhatIsNowPossible(const IdentifyResult& result, const std::function<void(int)>& onGoToTab);
+    /// The "a CPU is stuck running the prober" escape hatch, at the foot of the
+    /// body. Drawn from draw(); see its definition for why it is the one part of
+    /// the retired identification panel that was kept.
+    void drawStuckProber();
+
     /// Re-reads the mounted RPI-RP2 volumes, at most every kPollIntervalMs.
     /// findRpiRp2Volumes() walks the logical drives and queries each one's
     /// label, so doing it at frame rate would be pointless work. Called from
@@ -157,6 +171,12 @@ private:
     CpuProbeController m_probe;
 
     std::vector<std::string> m_volumes;
+    /// How many CPUs are in BOOTSEL, read alongside m_volumes and from the same
+    /// poll. Read together or not at all: the only thing this number is used
+    /// for is the DIFFERENCE between it and m_volumes.size(), and comparing two
+    /// readings taken at different moments would invent a mismatch (or hide
+    /// one) every time a drive mounted between them.
+    int m_bootselDevices = 0;
     /// listSerialPorts(): PRESENTLY ATTACHED ports, each named once. That it
     /// is presently-attached matters here rather than being a detail -- this
     /// list is what the manual picker below offers to reboot into BOOTSEL, and

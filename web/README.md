@@ -8,15 +8,26 @@ same source. Treat every claim below as a hypothesis until an `emsdk` owner has
 actually run it.
 
 The Windows/MSVC build **is** verified and was kept passing throughout: 279
-cases / 931 assertions, `ctest` 1/1, zero warnings from this project's own
-code at `/W4 /permissive-`, in both `win-msvc-debug` and `win-msvc-release`.
+cases / 931 assertions **as measured when this was written**, `ctest` 1/1, zero
+warnings from this project's own code at `/W4 /permissive-`, in both
+`win-msvc-debug` and `win-msvc-release`. The suite has grown since — it is 515
+cases / 2058 assertions today — but that figure was measured on Linux and
+nobody has re-run MSVC from here, so the numbers above are left as the ones
+actually observed there rather than quietly updated to a count nothing on
+Windows has confirmed.
 
-The Linux (`linux-gcc-release`) preset is **also unverified** — there is no
-Linux toolchain on this machine and that preset has never been configured, let
-alone built. It now passes `-static-libstdc++ -static-libgcc`, which is what
-the design spec's build table promises and what the "no dependencies, one exe"
-requirement needs; the flags are written from their documented behaviour and
-have not been run. See the comment above them in `CMakeLists.txt`.
+The Linux (`linux-gcc-release`) preset is **no longer unverified.** It
+configures, builds warning-clean at `-Wall -Wextra` for this project's own
+sources, and `ctest` is 1/1 with all 515 cases / 2058 assertions green.
+`-static-libstdc++ -static-libgcc` have now actually been run: they appear on
+all 7 link lines, and `readelf -d` on both `fwOGAppExplorer` and `fwog_tests`
+shows neither `libstdc++.so.6` nor `libgcc_s.so.1` in `DT_NEEDED`. See the
+comment above the flags in `CMakeLists.txt`, which also records the part of
+"no dependencies, one exe" that is *not* satisfied yet.
+
+What remains unverified on Linux is everything needing a board or a screen:
+volume discovery, the 1200-baud touch, the libcurl fetch, device
+identification and the UI have none of them been run there.
 
 ---
 

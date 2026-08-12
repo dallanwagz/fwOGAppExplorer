@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=FreeWili OG App Explorer
+GenericName=FreeWili 1-OG Firmware Flasher
+Comment=Load OG apps and the display bootloader onto a FreeWili 1-OG
+Exec=fwOGAppExplorer
+Icon=fwOGAppExplorer
+Terminal=false
+Categories=Development;Electronics;
+Keywords=FreeWili;RP2040;UF2;firmware;flash;
+StartupNotify=true
+StartupWMClass=fwOGAppExplorer

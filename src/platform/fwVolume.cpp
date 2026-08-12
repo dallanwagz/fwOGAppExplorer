@@ -2,15 +2,59 @@
 
 #include "core/fwTypes.h"   // platformLimitationNotice (the Emscripten branch below)
 
+#include <array>
 #include <fstream>
 #include <sstream>
 #include <system_error>
 
 #if defined(_WIN32)
   #include <windows.h>
+#elif !defined(__EMSCRIPTEN__)
+  #include <cerrno>
+  #include <cstring>
+  #include <fcntl.h>
+  #include <unistd.h>
 #endif
 
+// VERIFIED ON LINUX against a real FreeWili 1-OG, on the MAIN CPU.
+//
+// What was actually run, and what it showed:
+//
+//  - findRpiRp2Volumes() found the bootrom volume udisks2 mounted at
+//    /run/media/<user>/RPI-RP2 (/dev/sda1, vfat, removable), roughly 2-3 s after
+//    the 2e8a:0003 RP2 Boot device enumerated. TWO observations here read
+//    2.38 s and 2.41 s, and an earlier revision of this comment quoted that
+//    pair as the range -- which was a range of two samples of a varying
+//    quantity, not a bound. A reviewer's six observations of the same event
+//    spanned 1.93-3.12 s. Nothing in this file has a timeout keyed to it, so
+//    the number is documentation only; treat it as "a couple of seconds, and
+//    sometimes three" and do not tighten it again without more samples than the
+//    tightening implies.
+//  - copyToVolume() wrote probe/probe.uf2 to it; the CPU accepted the image,
+//    rebooted, enumerated as 2e8a:000a on MAIN's own hub port with MAIN's
+//    serial, and printed "main" on its CDC. It was then restored to
+//    FreeWiliMainV92.uf2 by the same function and came back as 093c:2054.
+//
+// Three defects were found by that run and by the experiments around it, and
+// all three are fixed below. They are described where they were fixed:
+// the volume match (findRpiRp2Volumes), the durability of the write
+// (copyToVolume), and BOOTSEL devices nothing has mounted (countBootselDevices).
+//
+// NOT verified: the DISPLAY CPU (deliberately -- MAIN has a physical BOOTSEL
+// button as a human fallback and DISPLAY does not, so the destructive work was
+// done on MAIN), and two bootrom volumes mounted AT ONCE from two real boards.
+// The two-volume behaviour below was measured with loopback FAT filesystems
+// carrying the RPI-RP2 label, which is what establishes udisks2's mount-point
+// naming, but no second FreeWili was attached.
+
 namespace fwog {
+
+// The RP2040 bootrom's identity, and the one string this file matches on. It is
+// the FAT volume label (what the Windows branch reads), and it is also the
+// Board-ID INFO_UF2.TXT reports (what the Linux branch reads). Declared here
+// rather than in the anonymous namespace below because detail:: needs it too.
+constexpr const char* kLabel = "RPI-RP2";
+
 namespace detail {
 
 std::string unescapeMount(std::string_view s)
@@ -31,16 +75,236 @@ std::string unescapeMount(std::string_view s)
     return out;
 }
 
+std::optional<MountLine> parseMountLine(std::string_view line)
+{
+    // /proc/mounts is "device mountpoint fstype options dump pass". Anything
+    // with fewer than three fields is not a mount and is skipped rather than
+    // half-parsed -- a truncated line must not be able to produce an entry
+    // with an empty mount point, which would later resolve to a relative path.
+    std::istringstream ls{ std::string(line) };
+    std::string dev, mnt, fs;
+    if (!(ls >> dev >> mnt >> fs)) return std::nullopt;
+
+    // The kernel escapes space, tab, newline and backslash in the device and
+    // mount-point fields as octal; decode before using either as a filesystem
+    // path, or a mount point containing a space (e.g. a display name) yields a
+    // path that does not exist on disk. The fstype field is a kernel-supplied
+    // identifier with no escaping to undo.
+    return MountLine{ unescapeMount(dev), unescapeMount(mnt), fs };
+}
+
+bool isRp2BootromInfo(std::string_view infoUf2Txt)
+{
+    // Every RP2040 bootrom volume carries an INFO_UF2.TXT that names the board.
+    // Measured on the attached FreeWili 1-OG, exactly (LF endings, 62 bytes):
+    //
+    //     UF2 Bootloader v3.0
+    //     Model: Raspberry Pi RP2
+    //     Board-ID: RPI-RP2
+    //
+    // Board-ID is the line to key on. Model is prose that has changed between
+    // bootrom revisions, and the "UF2 Bootloader" banner is shared with every
+    // OTHER vendor's UF2 bootloader -- Adafruit's and Microchip's boards
+    // present an INFO_UF2.TXT too, on a vfat volume, and an RP2040 image
+    // written to one of those is rejected by it as a foreign family ID. Keying
+    // on the banner would turn any such board plugged into the same machine
+    // into a volume this app offers to flash.
+    //
+    // Requiring exactly RPI-RP2 is the same question the Windows branch asks of
+    // the volume LABEL, so the two platforms accept the same set of devices.
+    for (size_t pos = 0; pos < infoUf2Txt.size();) {
+        const size_t eol = infoUf2Txt.find('\n', pos);
+        std::string_view line = infoUf2Txt.substr(
+            pos, eol == std::string_view::npos ? std::string_view::npos : eol - pos);
+        if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+
+        constexpr std::string_view kKey = "Board-ID:";
+        if (line.size() > kKey.size() && line.substr(0, kKey.size()) == kKey) {
+            std::string_view value = line.substr(kKey.size());
+            while (!value.empty() && (value.front() == ' ' || value.front() == '\t'))
+                value.remove_prefix(1);
+            while (!value.empty() && (value.back() == ' ' || value.back() == '\t'))
+                value.remove_suffix(1);
+            return value == kLabel;
+        }
+
+        if (eol == std::string_view::npos) break;
+        pos = eol + 1;
+    }
+    return false;
+}
+
+std::string unmountedBootselNotice(int bootselDevices, size_t volumesFound)
+{
+    // Nothing to explain unless a CPU is sitting in the bootrom that no mounted
+    // volume accounts for.
+    if (bootselDevices <= 0 || static_cast<size_t>(bootselDevices) <= volumesFound)
+        return {};
+
+    const int unaccounted = bootselDevices - static_cast<int>(volumesFound);
+
+    // THE REMEDY HAS TO WORK FOR THE NUMBER OF DRIVES IT IS TALKING ABOUT --
+    // and the two halves of this message count DIFFERENT things.
+    //
+    // The situation is about how many CPUs are unaccounted for. The remedy is
+    // about how many devices carry the label RPI-RP2, which is every CPU in
+    // BOOTSEL whether or not its drive got mounted. Those numbers are equal
+    // except in the one state that matters most: two CPUs in BOOTSEL with only
+    // one of them mounted -- the ordinary "now do the other CPU" state. There,
+    // one drive is unaccounted for while TWO devices are claiming the label.
+    //
+    // Getting that wrong is not cosmetic. udev publishes ONE
+    // /dev/disk/by-label/RPI-RP2 symlink per LABEL, and both RP2040 bootrom
+    // volumes carry the identical label, so with two devices present that path
+    // names exactly one of them -- whichever udev linked last, observed moving
+    // between devices seconds apart. Offer the by-label command in that state
+    // and the user has a coin flip between mounting the drive they wanted and
+    // getting "Device /dev/loop0 is already mounted at .../RPI-RP21", which
+    // leaves them exactly where this notice was written to rescue them from.
+    // (It is the same collapsing that makes by-label useless for COUNTING them,
+    // which is why countBootselDevices() walks the USB tree instead.)
+    //
+    // So: the count below comes from `unaccounted`, and the remedy from
+    // `bootselDevices`.
+    const std::string situation =
+        unaccounted == 1
+            ? std::string("A CPU is in BOOTSEL but its RPI-RP2 drive is not mounted, so "
+                          "there is nothing to copy to. This app writes a UF2 as a FILE "
+                          "and cannot mount the drive itself.")
+            : std::to_string(unaccounted) +
+                  " CPUs are in BOOTSEL but their RPI-RP2 drives are not mounted, so "
+                  "there is nothing to copy to. This app writes a UF2 as a FILE and "
+                  "cannot mount the drives itself.";
+
+    if (bootselDevices == 1)
+        return situation + " Mount it and try again -- for example: udisksctl mount -b "
+                           "/dev/disk/by-label/RPI-RP2";
+
+    return situation +
+           " Mount it and try again: run lsblk -o NAME,LABEL,MOUNTPOINT to find the "
+           "device node, then udisksctl mount -b /dev/<node>. Do not use "
+           "/dev/disk/by-label/RPI-RP2 here -- " +
+           std::to_string(bootselDevices) +
+           " drives carry that same label and udev publishes only one symlink for it, "
+           "so that path names just one of them at random.";
+}
+
+std::vector<std::string> selectRpiRp2Volumes(const VolumeIo& io)
+{
+    // This used to accept any mount whose last path component was spelled
+    // RPI-RP2, on the reasoning that udisks names the mount point after the
+    // label. Both halves of that are wrong, and both were measured on this
+    // machine:
+    //
+    //  NOT SUFFICIENT. A bind-mounted directory called RPI-RP2 -- no block
+    //  device, no FAT, tmpfs -- was returned as a bootrom volume, and
+    //  copyToVolume() then reported OK for a "flash" into it. Windows cannot
+    //  produce this: it enumerates drive letters and demands DRIVE_REMOVABLE
+    //  plus the label. Reporting a completed flash that never reached a board
+    //  is the exact failure copyToVolume's own comment calls the worst thing
+    //  it can do.
+    //
+    //  NOT NECESSARY. udisks2 uniquifies a colliding mount point by appending a
+    //  decimal integer, so a SECOND RPI-RP2 volume mounts at .../RPI-RP21, a
+    //  third at .../RPI-RP22. Measured with four such volumes mounted at once,
+    //  the old match returned ONE.
+    //
+    // WHAT THAT UNDERCOUNT ACTUALLY COST, traced through the real
+    // classifyVolumes()/decideAction() and the engine's switch rather than
+    // assumed. An earlier revision of this comment asserted that the old code
+    // "would see a single unambiguous drive and write to whichever CPU happened
+    // to mount first", and that RefuseAmbiguous was the guard being defeated.
+    // Both are false, and the second is structurally impossible: the hub-location
+    // arm in classifyVolumes() precedes the `volumes.size() >= 2` test, so with
+    // hub identity RefuseAmbiguous is never the answer either way. What the two
+    // finders really produce, with both CPUs of one board in BOOTSEL and neither
+    // publishing a CDC port:
+    //
+    //  WITH hub-location identity -- the normal FreeWili case, since both CPUs
+    //  hang off the board's own internal hub and identifyCpus() locates their
+    //  drives by port. Which drive got the plain .../RPI-RP2 mount point is a
+    //  race, so the old finder had two outcomes:
+    //    - the TARGET's drive won the name -> MappedToTarget -> WriteMappedVolume
+    //      -> writes the target's own drive. Correct, by luck.
+    //    - the OTHER CPU's drive won it -> MappedToOtherCpu -> RefuseWrongCpu
+    //      -> writes nothing, and tells the user to flash the other CPU first.
+    //      A spurious refusal, in the one state the user most needs to act in.
+    //  The new finder answers MappedToTarget in both, and the engine copies to
+    //  *volumeForCpu(identity, step.cpu) -- the identity's drive, never
+    //  volumes.front() -- so the fix converts a coin-flip refusal into the
+    //  correct targeted write. It does NOT rescue a write from the wrong CPU,
+    //  because with hub identity the old code could not perform one.
+    //
+    //  WITHOUT any identity -- two separate boards, an external hub, or a hub
+    //  port fwfinder did not resolve:
+    //    - old: one drive -> ForeignMounted -> RequireTypedConfirmation. Nothing
+    //      is written until the user types MAIN or DISPLAY; if they do, the
+    //      engine copies to volumes.front() (fwFlashEngine.cpp:535).
+    //    - new: two drives -> Ambiguous -> RefuseAmbiguous. Nothing is written.
+    //  This is the arm where the fix removes a real wrong-CPU write: the drive
+    //  the confirmation writes to is the one that won the mount race, and the
+    //  user is being asked to vouch for a mapping neither of them can see. A
+    //  main image on the DISPLAY CPU drives GPIO 29 against the PDM microphone's
+    //  own output -- see probe/README.md -- so that one path, and only that one,
+    //  is where "can physically damage the board" belongs.
+    //
+    // RESIDUAL, and not closed by anything here: the typed-confirmation path
+    // still writes volumes.front() whenever exactly one drive is visible with no
+    // identity to check it against -- e.g. both CPUs in BOOTSEL but only one of
+    // them mounted. Seeing both drives is what this function can fix; being
+    // right about a single anonymous one is not, and remains the confirmation
+    // prompt's problem.
+    //
+    // So ask the device, not the path. Two filters, cheapest first:
+    std::vector<std::string> out;
+    const std::string mounts = io.readMounts ? io.readMounts() : std::string{};
+
+    size_t pos = 0;
+    while (pos <= mounts.size()) {
+        const size_t eol = mounts.find('\n', pos);
+        const std::string_view line(mounts.data() + pos,
+                                    (eol == std::string::npos ? mounts.size() : eol) - pos);
+        pos = (eol == std::string::npos) ? mounts.size() + 1 : eol + 1;
+
+        const auto entry = parseMountLine(line);
+        if (!entry) continue;
+
+        // 1. Filesystem type, which costs no I/O at all. The bootrom volume is
+        //    always FAT. This is also what keeps the INFO_UF2.TXT read below
+        //    off every network mount on the machine -- an open() on a
+        //    disconnected NFS or CIFS mount can block for a long time, and
+        //    this function runs in a ~250ms poll loop on the flash worker.
+        //    udisks2 mounts it "vfat"; "msdos" is the same filesystem mounted by
+        //    hand with the older driver name, and is accepted so that a manual
+        //    mount is not silently invisible to this app.
+        //
+        //    IT IS NOT THE EQUAL OF THE WINDOWS GUARD, and should not be
+        //    described as one. GetDriveTypeA() == DRIVE_REMOVABLE is a cached
+        //    property of the volume that the Windows branch answers without
+        //    touching the media; this only narrows WHICH mounts get opened. A
+        //    vfat filesystem on stalled removable media -- a card reader whose
+        //    card was yanked, a USB stick mid-reset -- still gets an open() and
+        //    can still hold the worker up. Cheap and effective against the
+        //    common case (network mounts, the machine's own ext4), not a
+        //    guarantee that this scan cannot block.
+        if (entry->fsType != "vfat" && entry->fsType != "msdos") continue;
+
+        // 2. The volume's own account of itself. Present on every RP2040
+        //    bootrom volume; absent from the ordinary FAT filesystems this
+        //    machine also has mounted (an EFI system partition is vfat too,
+        //    and is the reason step 1 alone is not the answer). Requiring the
+        //    Board-ID to be RPI-RP2 -- not merely that the file exists -- is
+        //    what keeps another vendor's UF2 bootloader off the list.
+        const auto info = io.readInfoUf2 ? io.readInfoUf2(entry->mountPoint) : std::nullopt;
+        if (!info) continue;
+        if (isRp2BootromInfo(*info)) out.push_back(entry->mountPoint);
+    }
+    return out;
+}
+
 } // namespace detail
 
 namespace {
-#if !defined(__EMSCRIPTEN__)
-// Unreferenced on Emscripten, where there is no mass storage to enumerate;
-// guarded so that branch does not warn about an unused constant the first
-// time it actually compiles.
-constexpr const char* kLabel = "RPI-RP2";
-#endif
-
 #if defined(_WIN32)
 // SetErrorMode is a process-global setting, and findRpiRp2Volumes runs in a
 // ~250ms poll loop while waiting for a board to appear. A scope guard, not a
@@ -51,6 +315,68 @@ struct ErrorModeGuard {
     explicit ErrorModeGuard(UINT mode) : prev(SetErrorMode(mode)) {}
     ~ErrorModeGuard() { SetErrorMode(prev); }
 };
+#endif
+
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+/// fsync `file`, then the directory holding it, so both the data and the
+/// directory entry are on the device before the caller is told anything.
+///
+/// A vanished destination is SUCCESS, for the same reason the size check in
+/// copyToVolume() treats it that way: the bootrom volume disappears the instant
+/// it accepts the image, and on a small image that can happen before this runs.
+/// Only a real error -- a device that is still there and still refusing -- is
+/// reported, because failing here makes the app say a flash did not happen.
+///
+/// WHAT THAT RULE ASSUMES, stated because it is an assumption and not a proof:
+/// that the bootrom is the ONLY thing that removes this device. It is the only
+/// thing that removes it in the normal course of events, and it does so only
+/// after accepting every block -- which is what makes "gone" mean "finished".
+/// A pulled cable, a power loss or a yanked hub mid-writeback produces the
+/// identical errno with a partial image on the CPU, and copyToVolume() would
+/// then report a completed flash. Nothing here can tell the two apart: the
+/// device is gone in both, and the kernel does not say why.
+///
+/// This is not a regression introduced by adding the fsync -- the pre-existing
+/// size check in copyToVolume() has exactly the same hole and has always had it
+/// (a missing destination is read as success there too), so the flush neither
+/// widens nor narrows it. It is recorded here rather than left implicit because
+/// the honest bound on this whole function is "the write reached the device, OR
+/// the device left while we were writing", and only the first of those is what
+/// the caller goes on to report.
+std::expected<void, std::string> flushToDevice(const std::filesystem::path& file)
+{
+    const auto vanished = [](int e) {
+        // ENOENT: the bootrom took the file and the volume went with it.
+        // ENODEV/ENXIO: the device itself is already gone underneath us.
+        return e == ENOENT || e == ENODEV || e == ENXIO;
+    };
+
+    // O_RDONLY is enough: Linux permits fsync on any descriptor, and asking for
+    // write access to a file the bootrom may be in the middle of consuming
+    // gains nothing.
+    int fd = ::open(file.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        if (vanished(errno)) return {};
+        return std::unexpected(std::string("cannot reopen the written file: ") +
+                               std::strerror(errno));
+    }
+    const int rc = ::fsync(fd);
+    const int fsyncErrno = errno;
+    ::close(fd);
+    if (rc != 0 && !vanished(fsyncErrno))
+        return std::unexpected(std::strerror(fsyncErrno));
+
+    // The directory entry, best-effort. A FAT directory whose entry has not
+    // been written yet leaves a file the bootrom cannot see, but a failure to
+    // sync it is not evidence the DATA did not land, and this function's
+    // errors become "the flash failed" in the UI. Report nothing.
+    int dirFd = ::open(file.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dirFd >= 0) {
+        ::fsync(dirFd);
+        ::close(dirFd);
+    }
+    return {};
+}
 #endif
 } // namespace
 
@@ -85,24 +411,73 @@ std::vector<std::string> findRpiRp2Volumes()
 #elif defined(__EMSCRIPTEN__)
     // No mass storage in a browser.
 #else
-    std::ifstream mounts("/proc/mounts");
-    std::string line;
-    while (std::getline(mounts, line)) {
-        std::istringstream ls(line);
-        std::string dev, rawMountPoint;
-        if (!(ls >> dev >> rawMountPoint)) continue;
-        // The kernel escapes space, tab, newline and backslash in this field
-        // as octal; decode before using it as a filesystem path, or a mount
-        // point containing a space (e.g. a display name) yields a path that
-        // does not exist on disk.
-        const std::string mountPoint = detail::unescapeMount(rawMountPoint);
-        // udisks mounts the bootrom volume at .../RPI-RP2, by label.
-        const auto pos = mountPoint.rfind('/');
-        if (pos != std::string::npos && mountPoint.substr(pos + 1) == kLabel)
-            out.push_back(mountPoint);
-    }
+    // The decision itself is in detail::selectRpiRp2Volumes(), which is where
+    // the two filters and the reasoning behind them live. All that is left here
+    // is the machine: the real /proc/mounts and the real INFO_UF2.TXT. Keeping
+    // them apart is what makes the filters testable -- with the file opened
+    // inline, either could be deleted and nothing failed.
+    detail::VolumeIo io;
+
+    io.readMounts = [] {
+        std::ifstream f("/proc/mounts", std::ios::binary);
+        std::ostringstream ss;
+        ss << f.rdbuf();
+        return ss.str();
+    };
+
+    io.readInfoUf2 = [](const std::string& mountPoint) -> std::optional<std::string> {
+        std::ifstream info(std::filesystem::path(mountPoint) / "INFO_UF2.TXT",
+                           std::ios::binary);
+        if (!info) return std::nullopt;
+        // Bounded read: this is a file on a device the user plugged in, and
+        // nothing about it should be trusted to be small. The real one is 62
+        // bytes. The bound lives with the real reader rather than in the filter,
+        // so a fake cannot accidentally be exempted from it -- and so a fake is
+        // never obliged to simulate it.
+        std::array<char, 512> buf{};
+        info.read(buf.data(), buf.size());
+        return std::string(buf.data(), static_cast<size_t>(info.gcount()));
+    };
+
+    out = detail::selectRpiRp2Volumes(io);
 #endif
     return out;
+}
+
+int countBootselDevices()
+{
+#if defined(_WIN32) || defined(__EMSCRIPTEN__)
+    // Not asked here. On Windows the drive-letter enumeration above is already
+    // the whole answer -- there is no equivalent "device present but nothing
+    // mounted it" state to distinguish, because Windows mounts it itself -- and
+    // a browser has no USB tree to walk. Returning 0 makes
+    // unmountedBootselNotice() produce nothing, so no caller has to branch on
+    // the platform to decide whether to ask.
+    return 0;
+#else
+    // Counted from the USB device tree rather than from /dev/disk/by-label,
+    // deliberately. udev publishes ONE by-label symlink per label, so two
+    // boards in BOOTSEL produce one symlink and would be counted as one device
+    // -- which is the same undercount that made the mount-point match unsafe.
+    // The USB tree has a node per device and cannot collapse them.
+    int n = 0;
+    std::error_code ec;
+    std::filesystem::directory_iterator it("/sys/bus/usb/devices", ec);
+    if (ec) return 0;
+    for (const auto& dev : it) {
+        const auto readId = [&](const char* what) {
+            std::ifstream f(dev.path() / what);
+            std::string v;
+            f >> v;
+            return v;
+        };
+        // 2e8a:0003 is "RP2 Boot": an RP2040 sitting in the bootrom with its
+        // mass-storage interface up. 2e8a:000a, the prober's CDC, is a running
+        // application and is not this.
+        if (readId("idVendor") == "2e8a" && readId("idProduct") == "0003") ++n;
+    }
+    return n;
+#endif
 }
 
 std::expected<void, std::string> copyToVolume(const std::filesystem::path& src,
@@ -129,6 +504,36 @@ std::expected<void, std::string> copyToVolume(const std::filesystem::path& src,
     std::filesystem::copy_file(src, dst,
                                std::filesystem::copy_options::overwrite_existing, ec);
     if (ec) return std::unexpected("copy to " + volume + " failed: " + ec.message());
+
+#if !defined(_WIN32)
+    // copy_file() returning does NOT mean the image is on the board. MEASURED,
+    // writing firmware/FreeWiliMainV92.uf2 (4,917,760 B = 9,605 sectors) to the
+    // real board and reading /sys/block/sda/stat the instant copy_file()
+    // returned: 8,931 sectors had reached the device. 674 sectors -- 345,088
+    // bytes, 7% of the image -- were still in the page cache while this
+    // function was about to report success.
+    //
+    // It is not visible with a small image: the same measurement for
+    // probe/probe.uf2 (49,664 B = 97 sectors) showed 100 sectors written,
+    // the whole file plus FAT metadata, because udisks2 mounts this volume
+    // with the vfat `flush` option and that keeps up at 49 kB. Testing only
+    // with the prober would have concluded, wrongly, that nothing was needed.
+    //
+    // What the gap costs: runFlashPlan() treats this function returning success
+    // as "the bytes were written to the mass-storage volume" and reports the
+    // step complete on the strength of it. Between that report and the kernel
+    // finishing writeback, a pulled cable, a closed lid or a killed process
+    // truncates the image, and the user has been told the board was flashed.
+    // That is a silent partial write, and it is worth the wait to close it.
+    //
+    // fsync on the file, then on its directory: the file's data and the FAT
+    // directory entry that makes it findable are separate inodes, and only
+    // fsync'ing the former is the classic half of this recipe that people get
+    // wrong.
+    if (auto flushed = flushToDevice(dst); !flushed)
+        return std::unexpected("could not flush the image to " + volume + ": " +
+                               flushed.error());
+#endif
 
     // The bootrom volume disappears the instant it accepts the image, so a
     // destination that is now missing means success. Any OTHER error from the

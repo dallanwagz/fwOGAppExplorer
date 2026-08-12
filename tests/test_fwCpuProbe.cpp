@@ -373,6 +373,12 @@ TEST_CASE("ports that were already there are not mistaken for the prober's") {
 // suite for it.
 // ---------------------------------------------------------------------------
 
+// The LINUX shape of usbId is exercised in tests/test_fwSerialPorts.cpp, next
+// to the function that builds it -- the format and the predicate are only
+// correct in relation to each other, so they are asserted as a round trip
+// rather than against two hand-written strings that could drift apart. What
+// stays here is the Windows shape, which is the verified reference and which
+// the Linux branch must not have changed the judgement of.
 TEST_CASE("looksLikeProberUsbId matches the prober's CDC and nothing else") {
     // Captured verbatim from the board this was debugged against: the prober
     // on COM69, as Windows reported it.

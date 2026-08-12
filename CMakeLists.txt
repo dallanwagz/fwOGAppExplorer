@@ -86,12 +86,37 @@ endif()
 # placed here, before the first FetchContent_MakeAvailable() below, for exactly
 # that reason.
 #
-# UNVERIFIED: Linux has never been compiled for this project -- there is no
-# Linux toolchain on the machine this was written on, and the linux-gcc-release
-# preset has never been configured, let alone built. This is written from the
-# documented behaviour of the flags. Same status as the Emscripten paths above,
-# flagged for the same reason: a promise with no implementation is worse than
-# an implementation that says plainly it has not been run.
+# RUN, no longer merely written. The linux-gcc-release preset configures,
+# builds and links on GCC 16.1.1 / glibc 2.44, these two flags reach all 7 link
+# lines, and `readelf -d` on the two executables it produces reports DT_NEEDED
+# as exactly libudev.so.1, libm.so.6, libc.so.6 and ld-linux-x86-64.so.2 --
+# neither libstdc++.so.6 nor libgcc_s.so.1 is there. (libgcc_s.so.1 is still
+# mapped at run time; ldd shows it arriving as libudev's dependency, not this
+# executable's.) Unlike the Emscripten paths above, this block is no longer a
+# promise with no implementation behind it.
+#
+# The part of "no dependencies, one exe" that these flags do NOT deliver, said
+# plainly rather than left for someone to discover from an ldd on a user's
+# machine: libudev.so.1 is a hard, direct dependency of the executable. It
+# comes from freewili-finder and it is not something this file can flag away.
+#
+# THAT PACKAGING DECISION HAS NOW BEEN MADE: leave it dynamic, and document it.
+# There is no libudev.a to link against (the systemd package ships only the
+# shared library, and `pkg-config --libs --static libudev` answers `-ludev`), so
+# a static libudev would mean building systemd from source to build this app;
+# libudev is LGPL-2.1-or-later, and static linking carries a relink obligation
+# that a single shipped executable cannot satisfy on its own; and the third
+# option -- replacing freewili-finder's libudev use with direct sysfs reads --
+# is a rewrite of an upstream library's platform backend, which would fork the
+# finder this app shares with the rest of the FreeWili tooling. README.md's
+# "The dependency truth" states the result to users, including the display
+# libraries SDL3 dlopens that never appear in DT_NEEDED at all.
+#
+# Note also what this executable's DT_NEEDED does NOT bound: the glibc symbol
+# versions it requires. Measured here, the floor is GLIBC_2.43, and it is a
+# property of the BUILD MACHINE's glibc rather than of this source -- so a
+# release build belongs on the oldest distribution it is meant to run on. See
+# README.md, "Will the binary run on another machine?".
 if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         add_link_options(-static-libstdc++ -static-libgcc)
@@ -156,6 +181,14 @@ add_library(fwog_core STATIC
     # fwog_device.
     src/ui/fwTabDefaultFirmwareLogic.h
     src/ui/fwTabDefaultFirmwareLogic.cpp
+    # The .ICO parser behind the window icon, here for the same reason as the
+    # line above and the fwCatalogFilter precedent: it is pure byte handling
+    # with no SDL, so fwog_tests can feed it malformed containers directly.
+    # Compiled on every platform even though only the non-Windows builds link
+    # the SDL glue that calls it (src/ui/fwWindowIcon.cpp), so that a Windows
+    # developer's ctest run still covers it.
+    src/ui/fwIcoImage.h
+    src/ui/fwIcoImage.cpp
     ${_gen_src}
     ${_gen_hdr}
 )
@@ -337,6 +370,15 @@ if(MSVC)
     target_compile_options(imgui PRIVATE /W3)
 endif()
 
+# The runtime half of the window icon, guarded on the SAME condition as the
+# embedded .ico it decodes (cmake/EmbedResources.cmake): the two are useless
+# apart, so they are switched on and off together rather than by two
+# independent tests that can drift.
+set(_ui_icon_src "")
+if(_res_icon_src)
+    set(_ui_icon_src src/ui/fwWindowIcon.h src/ui/fwWindowIcon.cpp)
+endif()
+
 add_executable(fwOGAppExplorer
     src/main.cpp
     src/ui/fwApp.h
@@ -362,6 +404,14 @@ add_executable(fwOGAppExplorer
     # target rather than on fwog_core because only the UI ever draws it, and
     # fwog_tests links fwog_core without SDL.
     ${_res_board_src}
+    # The window icon at runtime, and the icon bytes it decodes. Both empty on
+    # Windows, where linking resources/app.rc is the whole of the icon wiring
+    # -- see src/ui/fwWindowIcon.h and cmake/EmbedResources.cmake. The PURE
+    # decoder is not here: fwIcoImage.cpp is in fwog_core so fwog_tests can
+    # exercise it without SDL, on every platform including the one that does
+    # not link this glue.
+    ${_res_icon_src}
+    ${_ui_icon_src}
     src/ui/fwFlashDialog.h
     src/ui/fwFlashDialog.cpp
 )
@@ -503,6 +553,8 @@ add_executable(fwog_tests
     tests/test_fwFlashController.cpp
     tests/test_fwSettingsIo.cpp
     tests/test_fwCpuProbe.cpp
+    tests/test_fwSerialPorts.cpp
+    tests/test_fwIcoImage.cpp
 )
 target_link_libraries(fwog_tests PRIVATE fwog_core fwog_device fwog_platform fwog_flash doctest::doctest)
 

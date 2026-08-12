@@ -100,20 +100,31 @@ VolumeState classifyVolumes(std::span<const std::string> volumes, bool weTouched
 /// `portIdentified` -- this step's target CPU publishes a serial port.
 /// `otherPortIdentified` -- the other CPU does.
 ///
-/// Both are evidence about where the target ISN'T, and that is what makes a
-/// one-click install possible in states that used to demand a ritual. A CPU
-/// publishing a CDC port is running firmware and is therefore NOT any mounted
-/// RPI-RP2 drive, because a drive is a CPU sitting in the bootrom. Hence:
+/// ONLY `portIdentified` changes an answer here. It is evidence about where
+/// the target ISN'T, and that is what makes a one-click install possible in
+/// states that used to demand a ritual: a CPU publishing a CDC port is running
+/// firmware and is therefore NOT any mounted RPI-RP2 drive, because a drive is
+/// a CPU sitting in the bootrom. Hence:
 ///
 ///  - target port present: no mounted drive can be the target's, however many
 ///    are mounted. Touch the port and take the drive that APPEARS -- causation
 ///    identifies it, so neither a pre-existing drive nor a second board's
 ///    drive is an ambiguity to refuse over. This is what makes "click once and
 ///    it installs" true with the other CPU already sitting in BOOTSEL.
-///  - target port absent, other port present, one drive: that drive is the
-///    target's by elimination. See GuardAction::WriteByElimination.
-///  - neither port present: nothing has been established, and the old, strict
-///    answers stand unchanged.
+///  - target port absent: nothing has been established from the port list, and
+///    the old, strict answers stand unchanged for the states that depend on it
+///    -- refuse, or ask. THREE states are unaffected because their evidence is
+///    not the port list at all: ExpectedAfterErase, MappedToTarget and
+///    OursAfterTouch, the last of which proceeds outright. Calling them
+///    "exceptions to refuse-or-ask" would undersell that -- they are not
+///    weakened refusals, they are answers reached another way. See the reasons
+///    on those arms in the .cpp.
+///
+/// `otherPortIdentified` is read by no arm. That is a decision and not an
+/// oversight -- the elimination rule that was its only consumer was removed for
+/// the reason given in the NOTE above, and the parameter was kept so that the
+/// removal stays visible and stays tested. decideAction() in the .cpp says why
+/// at the point where it discards it.
 ///
 /// The typed confirmation therefore survives only for the case it was actually
 /// written for -- a drive whose CPU genuinely cannot be worked out -- instead

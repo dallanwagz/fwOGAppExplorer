@@ -1,0 +1,83 @@
+# FreeWili 1-OG -- device access for fwOGAppExplorer.
+#
+# Install (as root):
+#   install -m 0644 60-fwog-app-explorer.rules /etc/udev/rules.d/
+#   udevadm control --reload && udevadm trigger
+# then unplug and replug the board.
+#
+#
+# WHY THIS FILE COVERS ONLY SERIAL PORTS
+#
+# The app opens exactly one kind of device node: the CDC-ACM serial ports the
+# RP2040s publish. It opens them O_RDWR (fwSerialTouch.cpp and
+# fwSerialPorts.cpp both do) -- for the 1200-baud BOOTSEL touch, and to read
+# the CPU prober's reply. It never opens /dev/bus/usb: freewili-finder's Linux
+# backend reaches USB through libudev, which reads sysfs, and sysfs is
+# world-readable. A rule that also loosened the raw USB nodes would be handing
+# out access this app has no code to use, so it does not.
+#
+# The RPI-RP2 mass-storage volume is deliberately absent from this file too. A
+# udev rule cannot grant the right to MOUNT a filesystem, which is what that
+# volume actually needs -- see README.md, "The RPI-RP2 volume".
+#
+#
+# WHY IT IS NEEDED AT ALL
+#
+# Measured on the machine this was written on (EndeavourOS, systemd 261):
+# /usr/lib/udev/rules.d/50-udev-default.rules line 47 matches
+# KERNEL=="tty[A-Z]*[0-9]" and sets GROUP="uucp", and a port left to that rule
+# alone comes out root:uucp 0660 -- /dev/ttyS0 on this machine is exactly that.
+# Debian and Ubuntu use "dialout" for the same job. Either way a user outside
+# that group gets EACCES from open(), and what the app reports is a touch that
+# failed, not a permission that is missing.
+#
+# You do NOT need this file if you would rather join that group:
+#   sudo usermod -aG uucp $USER      # dialout on Debian/Ubuntu
+# and log out and back in. That is one command and no file, but it grants
+# access to EVERY serial port on the machine, permanently, and it does not take
+# effect until the next login. This file is the narrower trade.
+#
+#
+# WHY TAG+="uaccess" AND NOT MODE="0666"
+#
+# uaccess makes systemd-logind put an ACL on the node for whoever owns the
+# active local session: the person sitting at the machine can flash the board,
+# nobody joins a group, and no other account on the machine gains anything.
+# MODE="0666" -- which is what several vendor rules in the wild do, including
+# the one already installed on this machine -- lets every account on the box
+# reset and reflash an attached board. For a tool whose whole job is writing
+# firmware, that is the wrong default.
+#
+# The 60- prefix is load-bearing: the uaccess builtin runs from
+# /usr/lib/udev/rules.d/73-seat-late.rules line 16, so a rule that sets the tag
+# has to be read before 73. (60-picotool.rules, shipped by picotool, is
+# numbered for the same reason.)
+#
+# uaccess covers a local desktop session and nothing else. Over ssh, or on a
+# system without logind, fall back to the group membership above.
+
+ACTION!="add|change", GOTO="fwog_end"
+SUBSYSTEM!="tty", GOTO="fwog_end"
+
+# MAIN CPU  -- 093c:2054, product string "FWOG main <name> <version>"
+ATTRS{idVendor}=="093c", ATTRS{idProduct}=="2054", TAG+="uaccess"
+
+# DISPLAY CPU -- 093c:2055, product string "FWOG display <name> <version>".
+# This is the CPU with no BOOTSEL button, so the 1200-baud touch on this port
+# is the only way it goes back to the bootrom. Losing access to it is the
+# expensive failure, not the cheap one.
+ATTRS{idVendor}=="093c", ATTRS{idProduct}=="2055", TAG+="uaccess"
+
+# The CPU prober's CDC -- 2e8a:000a. probe.uf2 runs from RAM on whichever
+# RP2040 it was written to and reports which one that is; this is the port it
+# reports on. Without it the prober cannot be read, and the app falls back to
+# asking the user to type MAIN or DISPLAY.
+ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="000a", TAG+="uaccess"
+
+# NOT listed, deliberately:
+#   2e8a:0003  RP2040 bootrom. Mass storage, no tty; needs a mount, not a mode.
+#   0403:6014  the board's own FTDI, third port on the board's internal hub.
+#              It publishes a ttyUSB, and the app never opens it -- it is not a
+#              CPU and there is nothing on it to flash.
+
+LABEL="fwog_end"

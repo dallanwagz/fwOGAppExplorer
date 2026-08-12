@@ -1,17 +1,32 @@
 # Hardware verification — FreeWili OG App Explorer
 
-Status at handoff: **detection verified on real hardware; no firmware write
-has been performed.** The CPU prober has since been **rebuilt against the
-board's own BSP after failing on hardware, and is itself awaiting hardware
-verification** — see its section below.
+Status: **the display-bootloader install, `LegacyDirect`, and the CPU prober
+have all been run against a physical board on Linux.** Detection was verified
+earlier on Windows. What has *not* been run is the everyday App Explorer
+`OgApp` path — there is still no known-good OG app UF2 on this machine.
 
-This document records what was confirmed against a physical board, and gives
-the remaining steps as a checklist ready to run. It is deliberately explicit
-about what was *not* done and why.
+**HOW TO READ THIS DOCUMENT.** It is written in the order things happened, and
+that order matters more than usual here, because the later work overturned some
+of the earlier work's stated limits. Sections 1 through "CPU prober" record the
+**Windows pass**, when no write had been authorised; "Identification on Linux"
+records a **later Linux pass in which writes were authorised and performed**.
+Where the two disagree the Linux section is the current state, and every
+superseded claim above it now says so at the point of the claim rather than
+leaving a reader to notice the contradiction on their own. Nothing has been
+deleted: what a pass believed at the time is part of the record.
 
 ---
 
-## Why the flash steps were not run
+## Why the flash steps were not run *in the Windows pass*
+
+> **Superseded by the Linux pass**, in which DISPLAY writes were authorised and
+> performed: `bl_display.uf2` (the bootloader install) and
+> `FreeWiliDisplayV67.uf2` (the `LegacyDirect` restore) both reached the DISPLAY
+> CPU. What did *not* happen even then is a standalone `flash_nuke` to DISPLAY —
+> on that run `dropRedundantErases()` removed the erase step. This section is
+> kept because it is the reasoning that held while the images below were the
+> only ones available, and because the risk it describes did not go away when
+> the authorisation changed.
 
 The remaining steps write firmware to a physical board. Running them
 unattended was the wrong call, for a reason that is about the images
@@ -59,6 +74,15 @@ read from `DEVPKEY_Device_BusReportedDeviceDesc`) is also live and reachable
 on Windows, but it is the fallback, not the primary. No revision to the
 Recovery tab text is needed.
 
+> **Qualified by the Linux pass — see "Identification on Linux" below.** Two
+> things about that paragraph turned out to need narrowing. The prefix test was
+> anchored at position 0 against a string that is only the USB product string on
+> Windows, so it could never match on Linux or macOS; and on a FreeWili 1-OG the
+> fallback is not merely "not the primary", it is **unreachable for this
+> hardware on every platform**, because fwfinder always resolves these CPUs'
+> USB identities to `SerialMain`/`SerialDisplay` and `identifyCpus()` skips any
+> record carrying a structural signal. Both are measured, below.
+
 One real-world observation worth keeping: **this board has been seen
 reporting its serial as the literal string `"Unknown"`**, which is what
 fwfinder emits for a flashable OG board when it finds no FTDI child. The app
@@ -69,14 +93,18 @@ socket rather than a board.
 
 ---
 
-## ☐ Step 2 — `DisplayBootloader` on a board that already has one
+## ✅ Step 2 — `DisplayBootloader` — DONE, on Linux
 
-**NOT AUTHORISED in this pass — this writes to the DISPLAY CPU.**
+**Was NOT AUTHORISED in the Windows pass — this writes to the DISPLAY CPU.**
 
-Listed here only for completeness of the original plan. Skip it unless you
-have separately decided to accept DISPLAY-write risk. Note the owner has
-confirmed that re-running a bootloader install on a board that already has
-one is safe and idempotent.
+It has since been run end to end on Linux and it succeeded: see
+"`DisplayBootloader` install, end to end" below for the plan, the timings and
+the USB identity the board came back with. What that run does **not** settle is
+this step as originally written — a re-run on a board that *already* has a
+bootloader. The write-up below does not record what DISPLAY was holding
+beforehand, so whether that run was idempotent-over-a-bootloader or a first
+install cannot be read back out of it. The owner has confirmed the re-run is
+safe; confirmation is not a measurement.
 
 ---
 
@@ -106,15 +134,32 @@ expect it.
 
 ## ☐ Step 4 — Refusals (mostly non-destructive; run these)
 
-These test that the app declines to act. Steps 4a and 4b write nothing.
+These test that the app declines to act. Step 4a writes nothing.
+
+**⚠ 4b DOES WRITE. Do not run it expecting a refusal.** This entry said the
+opposite until the Linux pass measured it, and a tester who trusted the old
+wording would have got a real write to a real CPU while believing nothing could
+happen. What changed is not the checklist's honesty but the engine: two mounted
+`RPI-RP2` volumes are no longer indistinguishable, because hub position
+identifies both of them. `classifyVolumes()` resolves that case *before* the
+ambiguity check ever runs — see its own comment, "the case this whole file was
+built around as unresolvable, resolves" — `test_fwVolumeState.cpp:172` pins it,
+and the Linux run recorded further down this document measured exactly that:
+`RPI-RP21` → MAIN and `RPI-RP2` → DISPLAY, cross-checked against
+`/sys/block/sd*`.
 
 - **4a. Unplug mid-plan.** Start a flash, pull the cable partway through.
   Expect a failure message that names exactly which steps completed. Confirm
   it does not claim success.
-- **4b. Both CPUs in BOOTSEL by hand.** Two `RPI-RP2` volumes mount. Expect
-  a **refusal**, not a copy — the two volumes are genuinely
-  indistinguishable, so guessing is never acceptable. Confirm the message
-  links to the Recovery tab.
+- **4b. Both CPUs in BOOTSEL by hand. THIS WRITES.** Two `RPI-RP2` volumes
+  mount. On a FreeWili — where both CPUs sit on the board's own internal hub —
+  expect the app to identify each volume by hub position and **write
+  immediately, with no prober and no prompt**. That is correct behaviour, not a
+  missing guard: guessing is what is forbidden, and hub position is not a guess.
+  The refusal path still exists and is what you get when the identity is
+  genuinely absent — two bootrom volumes with no hub identity behind them, which
+  a single FreeWili cannot produce.
+  Confirm the write lands on the CPU the hub says it should.
 - **4c. One CPU in BOOTSEL by hand.** Expect the typed-confirmation prompt
   to appear. Type a wrong answer and confirm it is rejected. (Typing the
   correct answer *will* proceed to a write — stop before that unless you
@@ -122,9 +167,16 @@ These test that the app declines to act. Steps 4a and 4b write nothing.
 
 ---
 
-## ☐ Step 5 — `LegacyDirect` (LAST, and destructive)
+## ✅ Step 5 — `LegacyDirect` (LAST, and destructive) — DONE, on Linux
 
 **Reordered after a real hardware failure — see below before running it.**
+
+Run to `Success` on Linux as the restore between phases; see "`LegacyDirect`
+also verified on Linux" below. One caveat that section carries and this one
+must not lose: on that run `dropRedundantErases()` removed the leading DISPLAY
+erase, because DISPLAY was already in its bootrom. **The erase-then-write-the-
+same-CPU race described at the end of this document was therefore not
+exercised.** The plan shape was verified; the hardest step in it was skipped.
 
 The plan is now three steps, and the order is enforced by
 `buildFlashPlan()` rather than by the manifest's array position:
@@ -190,10 +242,20 @@ firmware, so only run this when you have a replacement image to hand.
 
 ## ☐ Erase DISPLAY — AWAITING HARDWARE VERIFICATION
 
-**Status: shipped; never written to a board by this action.** The same
-`flash_nuke.uf2` has been written to the DISPLAY CPU on real hardware as step 1
-of the `LegacyDirect` plan, so the image and the CPU are not new to each other;
-what is new is reaching it from a standalone entry.
+**Status: shipped; never written to a board by this action.**
+
+An earlier draft softened that by saying `flash_nuke.uf2` had already reached
+the DISPLAY CPU as step 1 of the `LegacyDirect` plan, so the image and the CPU
+were "not new to each other". **That reassurance does not survive checking.**
+The one `LegacyDirect` run written up in this document is the Linux one, and on
+that run `dropRedundantErases()` *removed* the DISPLAY erase because that CPU
+was already in its bootrom — so it is not evidence that `flash_nuke` has ever
+run on DISPLAY. No run recorded here erased the DISPLAY CPU.
+
+So both halves are new: reaching it from a standalone entry, and the erase
+itself. The safety argument below stands on the RP2040's documented behaviour
+and on the erase-then-reappear property the Linux pass *did* observe on MAIN —
+not on a DISPLAY precedent, because there is not one.
 
 The `erase-display-cpu` action writes `flash_nuke.uf2` to DISPLAY. It is
 DISPLAY-only by the same two independent mechanisms, mirrored: the
@@ -220,9 +282,12 @@ does not, stop: that is the one outcome this action's safety argument rests on.
 
 ---
 
-## ☐ CPU prober (`probe/probe.uf2`) — REBUILT, AWAITING HARDWARE VERIFICATION
+## ✅ CPU prober (`probe/probe.uf2`) — REBUILT, AND SINCE VERIFIED ON HARDWARE
 
-**Status: rebuilt against the board's own BSP; never written to a board.**
+**Status: rebuilt against the board's own BSP after failing on hardware, then
+run on a real CPU during the Linux pass and answered correctly.** The
+static-only verification below was written before that run and is left as it
+was; the checklist it ends with is now scored against the run, item by item.
 
 ### What happened the first time
 
@@ -274,32 +339,209 @@ Statically verified (this is the entire verification budget — no hardware):
   an activity-LED mask of 0, so it drives no pin either;
 - reproducible: three independent build trees give byte-identical `.bin`/`.uf2`.
 
-**NOT established — this is the checklist item that remains open:**
+**The checklist, scored against the Linux run** (the run itself is written up
+under "The CPU prober's first DISPLAY answer" below):
 
-- [ ] The image **boots on real silicon**. This is the specific thing the
-      previous version failed at, and no static check can substitute for it.
-      The root cause above is a well-supported inference from the board headers
-      and the boot2 byte diff, **not a measurement**.
-- [ ] It **enumerates a USB CDC port** and holds it (the previous version never
-      did).
-- [ ] It prints `main` or `display`, once per second, and keeps doing so.
-- [ ] The answer is **correct** on a known CPU — flash it to a CPU whose
-      identity is already known and confirm the word matches.
-- [ ] The **1200-baud touch** actually returns it to BOOTSEL.
+- [x] The image **boots on real silicon**. This is the specific thing the
+      previous version failed at. It re-enumerated as `2E8A:000A` — a PID the
+      failed image never reached, which stayed at the bootrom's `2E8A:0003`
+      throughout. The boot2 `PICO_FLASH_SPI_CLKDIV` inference above is still an
+      inference about the *cause*; that the rebuilt image boots is now measured.
+- [x] It **enumerates a USB CDC port** and holds it, on the right hub port and
+      carrying that CPU's own serial.
+- [ ] It prints `main` or `display`, **once per second, and keeps doing so.**
+      Only the first answer was read — that is all `CpuProbeController` needs,
+      so nothing watched for the second. The repetition remains unverified.
+- [x] The answer is **correct** on a known CPU. It said `display` on the CPU
+      hub position independently placed at `3-4.1.2`.
+- [x] The **1200-baud touch** returns it to BOOTSEL — the flow closed as a
+      round trip.
 
-Suggested first run, on **MAIN only**, because MAIN has a reachable BOOTSEL
-button and DISPLAY has none: put MAIN in BOOTSEL by hand, copy `probe.uf2` to
-the single `RPI-RP2` volume, and watch for a new COM port saying `main`. Do not
-exercise this on DISPLAY, and do not use the two-volumes-mounted flow, until
-the single-CPU case is confirmed.
+**The suggested first run was on MAIN, and that is not what happened.** The
+advice below was written to keep the first exercise on the CPU with a reachable
+BOOTSEL button; the Linux pass instead ran it on **DISPLAY**, from the
+two-volumes-mounted flow, which is the more exposed of the two cases in both
+respects. It worked, and the 1200-baud touch brought that CPU back. The advice
+is kept because it was the right advice for an unproven image, and because it is
+still the right first step for anyone rebuilding the prober:
+
+> Put MAIN in BOOTSEL by hand, copy `probe.uf2` to the single `RPI-RP2` volume,
+> and watch for a new port saying `main`.
+
+What is still **not** established for the prober: any run on **MAIN**. Every
+observation of this image booting comes from one CPU, and it is the other one.
+
+---
+
+## ✅ Identification on Linux, and the display-bootloader install (VERIFIED)
+
+Run against the attached board (`FW4852`, MAIN serial `E463A8574B251838` on hub
+port `3-4.1.1`, DISPLAY serial `E463A8574B531838` on `3-4.1.2`), driving the
+real `FlashController`, `CpuProbeController` and `identifyCpus()` through a
+scratch program linked against the built libraries.
+
+**Signal 1 — hub port location. Works, and is always the answer.** Every
+identification observed in this pass, in every board state — both CPUs running
+firmware, both in BOOTSEL, one of each — resolved with
+`IdentitySource::HubLocation`. `ProductString` was never the source of any
+answer.
+
+**Signal 2 — the rule-5 product string. Was broken on Linux; the prefix test is
+now fed the right string, but it remains unreachable on this hardware.** Two
+separate facts, and they were being conflated:
+
+- fwfinder's `USBDevice::name` is *not* the USB product string except on
+  Windows. Measured: the board reports `product=MainCPU v92` /
+  `manufacturer=FreeWili` in sysfs and fwfinder hands out
+  `"FreeWili MainCPU v92"`. With the display bootloader installed — whose
+  descriptors really do say `manufacturer="FreeWili OG"`,
+  `product="FWOG display bl 001"`, `093C:2055` — fwfinder hands out
+  `"FreeWili OG FWOG display bl 001"`, which begins with neither `"FWOG display "`
+  nor `"FWOG "`. `productStringOf()` (`src/device/fwDeviceRecords.cpp`) now reads
+  the descriptor from sysfs instead, and the field holds what its own comment
+  always said it held.
+- Even so, **`identifyCpus()`' pass 2 cannot fire for a FreeWili 1-OG on any
+  platform.** `getUSBDeviceTypeFrom()` maps `093C:2054`/`093C:2055` straight to
+  `SerialMain`/`SerialDisplay`, and refines the RP2040 CDC PID by hub port to the
+  same two — so every CPU record carries a structural flag, and pass 2 skips
+  those by design. The product string's remaining live consumer is
+  `ogBootloaderState()`, which is not gated on pass 2.
+
+**What the broken string actually cost, measured on the board with the
+bootloader installed:**
+
+```
+fwfinder name   = "FreeWili OG FWOG display bl 001" -> ogBootloaderState Missing
+kernel iProduct = "FWOG display bl 001"             -> ogBootloaderState Present
+```
+
+`Missing` is what drives the device bar's "no OG bootloader" banner, so before
+this fix Linux told the owner of a correctly provisioned board to go and install
+the bootloader it already had — the false negative `ogBootloaderState()`'s own
+comment singles out as the expensive direction. Windows was never affected.
+
+**Both CPUs in BOOTSEL at once — the two-volume case.** Confirmed with two real
+CPUs rather than the loopback filesystems `fwVolume.cpp` was previously measured
+against. Both bootrom devices published the *identical* USB serial
+`E0C9125B0D9B`, udisks2 mounted them at `/run/media/drebbe/RPI-RP2` and
+`/run/media/drebbe/RPI-RP21`, `findRpiRp2Volumes()` returned **both**,
+`countBootselDevices()` returned 2, and `identifyCpus()` mapped
+`RPI-RP21`→MAIN and `RPI-RP2`→DISPLAY. Independently checked against
+`/sys/block/sd*` → `3-4.1.1`/`3-4.1.2`: correct.
+
+**The CPU prober's first DISPLAY answer.** With both CPUs in BOOTSEL, the real
+`CpuProbeController` wrote `probe.uf2` to the DISPLAY volume; that CPU
+re-enumerated as `2E8A:000A` on hub port 2 carrying DISPLAY's own serial and
+product `FWOG probe 002`, and answered `display` over its CDC. Whole flow took
+3.1 s. `proberCpu=DISPLAY`, `remainingCpu=MAIN`, `outcome=Success`. The 1200-baud
+touch then returned the prober's CPU to BOOTSEL, so the flow is a round trip.
+
+**`DisplayBootloader` install, end to end (the headline feature).** Run through
+`FlashController` from a normally-running board. Plan, timings and enumeration:
+
+| t | Step | Board |
+|---|---|---|
+| 0.1 s | ERASE MAIN — touch `/dev/ttyACM0` at 1200 baud | MAIN `093C:2054` → absent → `2E8A:0003 RP2 Boot`, auto-mounts |
+| 3.1 s | copy `flash_nuke.uf2` | MAIN volume releases |
+| 4.1 s | WRITE DISPLAY — touch `/dev/ttyACM1` at 1200 baud | DISPLAY `093C:2055` → absent → `2E8A:0003 RP2 Boot`, auto-mounts |
+| 6.8 s | copy `bl_display.uf2` | |
+| 7.7 s | `Success`, 2/2 steps | DISPLAY re-enumerates as `093C:2055 "FWOG display bl 001"` |
+
+Both steps went through `GuardAction::TouchThenWait`, and both copies landed on
+the mount point spelled `/run/media/drebbe/RPI-RP2` — the *same* path, because
+MAIN's volume released and DISPLAY's then took the name. The release wait
+between steps is the only thing that makes that safe, and this run is a live
+instance of the case its comment describes.
+
+**`LegacyDirect` also verified on Linux**, as the restore between phases:
+`dropRedundantErases()` correctly dropped the DISPLAY erase (that CPU was
+already in its bootloader), the 8.2 MB display image took 128 s and the 2.5 MB
+main image 41 s, `Success` 2/2, and the board came back to `MainCPU v92` /
+`DisplayCPU v67` with unchanged serials.
+
+**The state the board was left in, and how it got there**, because the sequence
+above does not by itself produce it and a reader checking the board against this
+document should not have to guess. The bootloader plan's first step erases MAIN,
+so immediately after it MAIN held nothing. A further `WRITE MAIN` from
+`FreeWiliMainV92.uf2` was run to restore it. Final state, read from live sysfs:
+
+    3-4.1.1  093c:2054  product=MainCPU v92          manufacturer=FreeWili
+    3-4.1.2  093c:2055  product=FWOG display bl 001  manufacturer=FreeWili OG
+    3-4.1.3  0403:6014  product=FreeWili             serial=FW4852
+
+Serials unchanged throughout on all three. That DISPLAY line is the evidence
+that the bootloader install worked: `FWOG display bl 001` is the bootloader's
+own USB identity, and only the bootloader publishes it.
+
+**An observation worth checking before trusting a 30 s budget.** After
+`flash_nuke.uf2`, the erased MAIN CPU took a long time to come back as
+`2E8A:0003`. What was actually timed: it was still absent when checked
+immediately after the plan reported success, and was still absent through a
+further 18 s of polling, appearing on the next 2 s sample. The interval from the
+write itself was **not** timed, so the honest bound is "well over 20 s", not a
+figure.
+
+Nothing in this pass depended on it — the bootloader plan's erase is the last
+thing that touches MAIN, and the DISPLAY step that follows waits on a different
+CPU. `GuardAction::WaitForEraseReboot` allows `kVolumeWaitMs` (30 s) for exactly
+this event.
+
+**A plan of that shape does ship, and this is the one thing in this document
+that should worry someone.** An earlier draft of this section said no such plan
+exists; that was wrong. `freewili-original-deprecated` — a `defaultFirmware`
+entry, offered on the Default Firmware tab — is `LegacyDirect` with three
+assets, and `buildFlashPlan` orders it **ERASE DISPLAY → WRITE DISPLAY → WRITE
+MAIN**. The project's own test at `tests/test_fwFlashPlan.cpp:244` pins that
+sequence against the real compiled-in catalog. So the erase-then-write-the-same-
+CPU race is not hypothetical: it is a shipping path, and it runs on DISPLAY,
+the CPU with no BOOTSEL button.
+
+What happens there: `fwFlashEngine.cpp:388` sets `expectedFromPriorErase`,
+`classifyVolumes()` returns `ExpectedAfterErase`, and step 2 waits under
+`WaitForEraseReboot` — 30 s — for a `flash_nuke` reboot measured here at "well
+over 20 s". If it loses that race the outcome is `FlashOutcome::Timeout`, on a
+CPU whose firmware the app has just destroyed.
+
+The run recorded above dodged it only by accident: `dropRedundantErases()`
+removed the erase because DISPLAY was already sitting in its bootrom. On the
+ordinary running board this entry exists for, the erase is kept and the race is
+real.
+
+**Still not timed properly**, and that is the gap: the interval was measured
+from the wrong starting point, so the margin against 30 s is unknown — it could
+be 8 s or it could be negative. Anyone touching this path should time the erase
+reboot from the write itself before trusting `kVolumeWaitMs`.
+
+**Not established here:** what the physical display panel shows in any of these
+states (nobody looked at the screen), and whether the DISPLAY bootloader console
+behaves differently under an OG main image than under `FreeWiliMainV92` — with
+v92 running, the bootloader console enumerated within 10 s and stayed up for at
+least 60 s, but v92 is not an OG image and may not speak the inter-CPU protocol
+the "~10 s of MAIN silence" rule is about.
 
 ---
 
 ## Not verified anywhere
 
-- **Linux** — never compiled. The design `dlopen`s libcurl rather than
-  link-depending on it; the "libcurl absent" path needs a container without
-  it to test honestly.
+- **Linux** — the identification, probe and flash paths are verified against
+  hardware; see the section above. `ctest --preset linux-gcc-release` is green
+  at **551 cases / 2170 assertions**, warning-clean at `-Wall -Wextra`. The one
+  path still unexercised on Linux is the App Explorer **`OgApp` flash** — the
+  everyday one — because there is still no known-good OG app UF2 on this
+  machine. Both halves of the remote catalog's libcurl `dlopen` *have* been run,
+  including the libcurl-absent half, forced under a mount namespace with the
+  sonames made unresolvable; `fwHttp.cpp`'s own VERIFICATION STATUS block lists
+  exactly what was exercised and what was not.
+- **Linux, and what the app looks like** — the app has been launched and driven
+  on Linux, but only on a private `Xvfb` display, because the machine's owner is
+  on a Wayland session that must not be disturbed. So the X11 path is exercised
+  and the **Wayland path is not**: no window has been mapped on a real
+  compositor. See README.md, "What is and is not verified on Linux".
+- **Linux, as it stood before the hardware pass** — kept as a record of what was
+  once claimed, not as a current statement. At that point the preset compiled
+  and unit-tested only: no `RPI-RP2` volume discovered, no 1200-baud touch
+  performed, no UF2 written, and the app never launched. Every line of that has
+  since been overtaken by the section above.
 - **Emscripten / web** — never compiled, by explicit decision. See
   `web/README.md` for what a person with emsdk should try first, including
   the COOP/COEP headers `-pthread` requires.

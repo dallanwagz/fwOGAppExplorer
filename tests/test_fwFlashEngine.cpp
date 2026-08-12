@@ -1202,6 +1202,74 @@ TEST_CASE("an erased CPU that never comes back is a timeout, not a silent skip")
     CHECK(r.message.find("DISPLAY") != std::string::npos);
 }
 
+TEST_CASE("an erased CPU is given far longer to return than a touched one") {
+    // The regression this pins is not hypothetical: it shipped, and it cost a
+    // real board. The erase-reboot wait used to run on kVolumeWaitMs, whose
+    // 30 s is justified by "a touch works in about a second or it did not
+    // work". An erase is not a touch -- flash_nuke erases the whole flash chip
+    // before resetting, measured on real hardware at just over 60 seconds --
+    // so the deprecated-firmware install erased the DISPLAY CPU, waited half
+    // as long as the hardware needed, and reported that the CPU never came
+    // back. It had; the app stopped looking about thirty seconds early.
+    //
+    // Counted in POLLS, because that is the clock the engine's budget is
+    // measured against: kVolumePollMs each, so kVolumeWaitMs is 120 polls and
+    // kEraseRebootWaitMs is 600.
+    const int touchBudgetPolls = kVolumeWaitMs / kVolumePollMs;
+    const int eraseBudgetPolls = kEraseRebootWaitMs / kVolumePollMs;
+    REQUIRE(eraseBudgetPolls > touchBudgetPolls);   // the whole point
+
+    SUBCASE("a return that would have missed the touch budget now succeeds") {
+        Harness h;
+        h.identity.displayPort = "COM65";
+        h.eraseReboots = 1;
+        // Comfortably past the old budget, comfortably inside the new one --
+        // and inside the ~62 s the hardware actually takes.
+        h.eraseRebootAfterEmptyPolls = touchBudgetPolls + 80;
+
+        std::vector<FlashStep> plan{ eraseStep(TargetCpu::Display), step(TargetCpu::Display) };
+        auto r = runFlashPlan(h.io(), plan, "", kNoProgress);
+
+        CHECK(r.outcome == FlashOutcome::Success);
+        CHECK(h.copiedTo.size() == 2);   // the erase, then the image it exists to allow
+    }
+
+    SUBCASE("but the wait is still bounded -- it does not simply wait forever") {
+        Harness h;
+        h.identity.displayPort = "COM65";
+        h.eraseReboots = 1;
+        h.eraseRebootAfterEmptyPolls = eraseBudgetPolls + 10;   // past even the new budget
+
+        std::vector<FlashStep> plan{ eraseStep(TargetCpu::Display), step(TargetCpu::Display) };
+        auto r = runFlashPlan(h.io(), plan, "", kNoProgress);
+
+        CHECK(r.outcome == FlashOutcome::Timeout);
+        CHECK(h.copiedTo.size() == 1);   // only the erase
+    }
+}
+
+TEST_CASE("the countdown a user watches belongs to the wait actually running") {
+    // waitTotalMs is what the dialog draws its determinate bar against. If the
+    // erase wait reported the touch budget, the bar would fill in 30 s and
+    // then sit at 100% for another half-minute while the wait was still
+    // legitimately running -- precise about the wrong number, which is worse
+    // than vague.
+    Harness h;
+    h.identity.displayPort = "COM65";
+    h.eraseReboots = 1;
+    h.eraseRebootAfterEmptyPolls = 8;
+
+    int erasePhaseTotal = 0;
+    std::vector<FlashStep> plan{ eraseStep(TargetCpu::Display), step(TargetCpu::Display) };
+    runFlashPlan(h.io(), plan, "", [&](const FlashProgress& p) {
+        if (p.phase == FlashPhase::WaitingForVolume &&
+            p.message.find("erased") != std::string::npos)
+            erasePhaseTotal = p.waitTotalMs;
+    });
+
+    CHECK(erasePhaseTotal == kEraseRebootWaitMs);
+}
+
 TEST_CASE("a second volume during the erase-reboot wait refuses as ambiguous") {
     // A hand-pressed BOOTSEL landing inside the window in which the erased CPU
     // is returning is exactly what the two-volume refusal is for, and it must
@@ -1360,6 +1428,26 @@ TEST_CASE("a mapping for one CPU does not authorise a write to the other") {
     CHECK(r.message.find("G:/") != std::string::npos);
     CHECK(r.message.find("MAIN") != std::string::npos);
     CHECK(r.message.find("DISPLAY") != std::string::npos);
+
+    // AND THE REMEDY ADDRESSES THIS STEP'S CPU, not the one whose drive
+    // happens to be mounted. The message used to end "Flash the MAIN CPU
+    // first, or unmount that volume", which reads as actionable and is not:
+    // flashing MAIN is a different plan, and unmounting leaves this step with
+    // no drive AND no port, refusing again one branch over. A user who
+    // followed it arrived at a second error having changed nothing that
+    // mattered. What unblocks this step is putting ITS CPU into the bootloader.
+    CHECK(r.message.find("Put the DISPLAY CPU into its bootloader") != std::string::npos);
+    // The DISPLAY procedure specifically -- it has no button, so "hold the red
+    // button" would send the user looking for one that does not exist.
+    CHECK(r.message.find("BOOTSEL pad") != std::string::npos);
+    CHECK(r.message.find("red button") == std::string::npos);
+    // And it says the state the user is being sent into is legitimate, because
+    // it looks like it should not be: two RPI-RP2 drives at once used to be
+    // exactly what this app refused over, and hub position is why it no longer
+    // is. Without this a cautious user stops here.
+    CHECK(r.message.find("Both CPUs being in BOOTSEL at once is fine") != std::string::npos);
+    // The advice that was wrong is gone, not merely supplemented.
+    CHECK(r.message.find("unmount that volume") == std::string::npos);
 }
 
 TEST_CASE("both CPUs in the bootrom flash to their own drives, with no probe and no prompt") {

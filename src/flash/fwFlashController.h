@@ -88,7 +88,7 @@ enum class SelectionCheck {
 /// SelectionCheck::Unchanged.
 ///
 /// A serial that carries no identifying information -- empty, or fwfinder's
-/// own "Unknown" sentinel (see DeviceModel.h's serialIsUnidentified(), which
+/// own "Unknown" sentinel (see fwDeviceModel.h's serialIsUnidentified(), which
 /// this delegates to) -- on either side is treated as a MISMATCH
 /// (SelectionCheck::UnidentifiedSerial), never skipped or waved through: a
 /// device that will not say what it is does not get assumed unchanged when the

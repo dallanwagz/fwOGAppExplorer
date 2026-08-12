@@ -59,6 +59,38 @@ TEST_CASE("an upper-case scheme is NOT rejected as an unsupported scheme") {
     }
 }
 
+TEST_CASE("an https request may not be redirected onto plain http") {
+    // The redirect policy, pinned as a rule rather than as a libcurl option.
+    //
+    // This is the guarantee WinHTTP has always given the Windows build for
+    // free -- WINHTTP_OPTION_REDIRECT_POLICY defaults to
+    // DISALLOW_HTTPS_TO_HTTP -- and that the POSIX build did not give at all
+    // until it started asking libcurl for it explicitly: libcurl's default
+    // allows HTTP, HTTPS, FTP and FTPS on redirect, so a server could walk an
+    // https catalog URL down to plain http.
+    //
+    // Why it matters here specifically and not just in general: a catalog
+    // entry is authoritative over the target CPU, which is why
+    // normalizeRemoteCatalogUrl() refuses to let a user configure a plain-http
+    // catalog URL in the first place. A downgrade redirect would re-open that
+    // hole from the server side, where the user cannot see it.
+    for (const char* url : { "https://example.com/apps.json",
+                             "HTTPS://example.com/apps.json",   // RFC 3986: schemes are
+                             "HtTpS://example.com/apps.json" }) // case-insensitive
+        CHECK_FALSE(mayRedirectToPlainHttp(url));
+}
+
+TEST_CASE("a plain-http request keeps both schemes on redirect") {
+    // The rule is a DOWNGRADE ban, not an https-only ban. A request that was
+    // already plain http has no TLS to lose, and refusing http -> http would
+    // break ordinary redirects for the non-catalog things fetched with this
+    // transport. Asserting this is what stops the rule from being "silently
+    // return false for everything", which the case above alone would pass.
+    for (const char* url : { "http://example.com/apps.json",
+                             "HTTP://example.com/apps.json" })
+        CHECK(mayRedirectToPlainHttp(url));
+}
+
 TEST_CASE("a request made with no transport fails cleanly") {
     // The contract that matters for the offline story: with no transport,
     // httpGet returns an error naming the reason. It never throws and never

@@ -126,6 +126,12 @@ struct WaitReporter {
     size_t            stepCount;
     TargetCpu         cpu;
     std::string       message;
+    /// The budget THIS wait runs against, defaulted so the touch and release
+    /// waits read unchanged. Carried here rather than read from a global at
+    /// the point of use, so the countdown a user watches always belongs to the
+    /// question actually being asked -- an erase wait reporting a touch's 30 s
+    /// would be a determinate bar being precise about the wrong number.
+    int               budgetMs = kVolumeWaitMs;
 
     /// The phase transition itself: emitted once, before the first poll, and
     /// the only one of these reports that reaches the scrolling log.
@@ -147,7 +153,7 @@ struct WaitReporter {
         p.message       = message;
         p.isRefresh     = refresh;
         p.waitElapsedMs = elapsedMs;
-        p.waitTotalMs   = kVolumeWaitMs;
+        p.waitTotalMs   = budgetMs;
         progress(p);
     }
 };
@@ -214,7 +220,7 @@ NewVolumeWait waitForNewVolume(const FlashIo& io, const std::vector<std::string>
         auto fresh = arrivals(io.findVolumes());
         if (fresh.size() >= 2) return { WaitOutcome::Ambiguous, {} };
         if (fresh.size() == 1) return { WaitOutcome::Ready, std::move(fresh.front()) };
-        if (waited >= kVolumeWaitMs) return { WaitOutcome::TimedOut, {} };
+        if (waited >= reporter.budgetMs) return { WaitOutcome::TimedOut, {} };
         if (!io.waitTick(kVolumePollMs)) return { WaitOutcome::Cancelled, {} };
         waited += kVolumePollMs;
         reporter.refresh(waited);
@@ -479,12 +485,37 @@ FlashResult runFlashPlan(const FlashIo& io,
                 ? "the Recovery tab's CPU probe measured that, it is not a guess"
                 : "it is on that CPU's port of the board's internal USB hub, which is "
                   "structural and does not depend on what firmware is loaded";
+            // THE REMEDY HAS TO ADDRESS THE STEP'S OWN CPU. This used to end
+            // "Flash the <other> CPU first, or unmount that volume", and both
+            // halves were wrong in the same way: they answer a question about
+            // the drive that IS here rather than the CPU that is not.
+            //
+            // Flashing the other CPU is advice for a different plan; it does
+            // nothing for this step. And unmounting is worse than useless --
+            // with the volume gone the state becomes NoneMounted with still no
+            // port, which refuses again one branch over, so the user follows an
+            // instruction and arrives at a different error. What actually
+            // unblocks this step is the one thing neither half mentioned:
+            // getting THIS step's CPU into its bootloader too.
+            //
+            // Naming the procedure per CPU rather than pointing at Recovery
+            // alone, because the two differ in a way that matters: MAIN has a
+            // button and DISPLAY does not, and a user told to "put it into
+            // BOOTSEL" who goes looking for a button on the DISPLAY CPU will
+            // not find one.
+            const char* howToBootsel = step.cpu == TargetCpu::Main
+                ? "disconnect the battery, then plug the board into USB with the red "
+                  "button held down"
+                : "short the DISPLAY BOOTSEL pad to ground while the board powers up";
             return failStep(FlashOutcome::RefusedWrongCpu,
                             "the one RPI-RP2 volume mounted (" + volumes.front() + ") is the " +
                             theirs + " CPU -- " + how + " -- and this step writes to the " +
                             mine + " CPU, which is not answering on a port either. "
                             "Writing here would put this image on the wrong CPU, so nothing was "
-                            "written. Flash the " + theirs + " CPU first, or unmount that volume.",
+                            "written. Put the " + mine + " CPU into its bootloader as well and "
+                            "try again: " + howToBootsel + ". Both CPUs being in BOOTSEL at once "
+                            "is fine -- each drive is told apart by which port of the board's "
+                            "internal hub it is on. The Recovery tab has both procedures.",
                             i);
         }
 
@@ -544,10 +575,14 @@ FlashResult runFlashPlan(const FlashIo& io,
             // same ambiguity check as every other wait; only the touch is
             // absent. If the volume is already there, the wait's first poll
             // sees it and returns immediately.
+            // kEraseRebootWaitMs, NOT kVolumeWaitMs: a full-chip erase takes
+            // just over a minute on this board, where a touch takes a second.
+            // See the measurements on that constant.
             const WaitReporter waiting{ progress, FlashPhase::WaitingForVolume, i, n,
                                         step.cpu,
                                         std::string("waiting for the erased ") + cpu +
-                                        " CPU to return as an RPI-RP2 volume" };
+                                        " CPU to return as an RPI-RP2 volume",
+                                        kEraseRebootWaitMs };
             // Delta-based like the touch wait, and for the same reason: the
             // drive we are waiting for is the one that ARRIVES, and any drive
             // already sitting there belongs to something else.

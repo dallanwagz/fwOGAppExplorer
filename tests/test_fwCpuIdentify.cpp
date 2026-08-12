@@ -6,10 +6,38 @@
 using namespace fwog;
 
 namespace {
-CpuPortRecord hubMain(std::string port)    { return { std::move(port), "",  true,  false }; }
-CpuPortRecord hubDisplay(std::string port) { return { std::move(port), "",  false, true  }; }
+// Every helper below fills CpuPortRecord's fields BY NAME rather than
+// brace-initialising the aggregate positionally, and every test builds its
+// records through one of them rather than writing a brace literal inline.
+//
+// CpuPortRecord is a struct that grows: `volume` and the two isMassStorage*
+// flags are there because a CPU sitting in the bootrom had to become something
+// this project could identify at all, and the next such fact will land the same
+// way. A positional `{ port, product, true, false }` quietly stops covering the
+// struct every time that happens. It still compiles and still means the right
+// thing, which is exactly the problem: nothing left in the source distinguishes
+// a deliberate "leave the rest at their defaults" from an initialiser somebody
+// forgot to extend. GCC says so out loud as -Wmissing-field-initializers; MSVC
+// never mentions it, which is why this survived a fully verified Windows build.
+// Naming the fields makes each helper state the board condition it describes
+// and leaves everything else at the defaults fwTypes.h declares, which is what
+// these tests have always meant.
+
+/// A CPU running firmware, located by which internal-hub port its serial device
+/// is on. `product` is the USB product string, which most tests do not care
+/// about -- pass one only when the test is about what the string says.
+CpuPortRecord hubMain(std::string port, std::string product = "") {
+    CpuPortRecord r; r.port = std::move(port); r.product = std::move(product);
+    r.isSerialMain = true; return r;
+}
+CpuPortRecord hubDisplay(std::string port, std::string product = "") {
+    CpuPortRecord r; r.port = std::move(port); r.product = std::move(product);
+    r.isSerialDisplay = true; return r;
+}
+/// A serial port carrying NO structural signal, so only its product string is
+/// left to identify it by.
 CpuPortRecord plain(std::string port, std::string product) {
-    return { std::move(port), std::move(product), false, false };
+    CpuPortRecord r; r.port = std::move(port); r.product = std::move(product); return r;
 }
 /// A CPU sitting in the RP2040 bootrom, located by which internal-hub port its
 /// mass-storage device is on.
@@ -85,7 +113,7 @@ TEST_CASE("hub location wins over a contradicting product string") {
     // Structural position is authoritative; a stale product string must not
     // override where the device physically sits on the hub.
     std::vector<CpuPortRecord> r{
-        { "COM60", "FWOG display bl", true, false },
+        hubMain("COM60", "FWOG display bl"),
     };
     auto id = identifyCpus(r);
     CHECK(id.mainPort == "COM60");
@@ -165,8 +193,8 @@ TEST_CASE("ambiguous hub-main candidates reject contradicting product string") {
     // ANY structural signal has its role decided by hub position (or ambiguous) --
     // a product string must never override it.
     std::vector<CpuPortRecord> r{
-        { "COM60", "FWOG display bl", true, false },
-        { "COM61", "",                true, false },
+        hubMain("COM60", "FWOG display bl"),
+        hubMain("COM61"),
     };
     auto id = identifyCpus(r);
     CHECK_FALSE(id.mainPort.has_value());
@@ -178,8 +206,8 @@ TEST_CASE("ambiguous hub-display candidates reject contradicting product string"
     // displayPort is ambiguous and unresolved; neither port is eligible for
     // identification as main, even if one carries "FWOG main ..." product string.
     std::vector<CpuPortRecord> r{
-        { "COM60", "FWOG main template", false, true },
-        { "COM61", "",                   false, true },
+        hubDisplay("COM60", "FWOG main template"),
+        hubDisplay("COM61"),
     };
     auto id = identifyCpus(r);
     CHECK_FALSE(id.mainPort.has_value());
@@ -253,7 +281,7 @@ TEST_CASE("a running display outranks a stale volume claim") {
 TEST_CASE("identifyCpus records the display port's product string") {
     // The field ogBootloaderState() reads has to actually get filled in.
     std::vector<CpuPortRecord> r{ hubMain("COM60"),
-                                  { "COM59", "FWOG display bl 001", false, true } };
+                                  hubDisplay("COM59", "FWOG display bl 001") };
     auto id = identifyCpus(r);
     REQUIRE(id.displayPort == "COM59");
     CHECK(id.displayProduct == "FWOG display bl 001");

@@ -3,7 +3,7 @@
     {
       "id": "bl_display",
       "file": "bl_display.uf2",
-      "version": "826de9a-dirty"
+      "version": "aab2ff3"
     },
     {
       "id": "FreeWiliMain",
@@ -34,7 +34,7 @@
       "description": "Erases the MAIN CPU, then installs the display serial bootloader on the DISPLAY CPU. Do this once per board. MAIN is erased first because a running main app talks continuously on the inter-CPU link, and the DISPLAY bootloader needs MAIN quiet; it also leaves the board wanting an app, which is the next thing to flash. After this, app firmware is embedded in the main UF2 and arrives over the inter-CPU link automatically, so one file flashes both CPUs.",
       "flashScheme": "DisplayBootloader",
       "defaultFirmware": true,
-      "version": "826de9a-dirty",
+      "version": "aab2ff3",
       "uf2": [
         {
           "cpu": "main",

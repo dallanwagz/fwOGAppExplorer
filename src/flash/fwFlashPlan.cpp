@@ -286,8 +286,27 @@ std::string droppedEraseNote(std::span<const FlashStep> fullPlan, const CpuIdent
         // Says what was removed, what replaced the need for it, and -- last,
         // because it is the part a user would otherwise wonder about -- that
         // nothing about the outcome changes.
-        return std::string("The ERASE of the ") + cpu + " CPU is not in this plan: the CPU "
-               "probe has already identified " + volume + " as the " + cpu + " CPU sitting "
+        //
+        // NAME THE RIGHT SOURCE. This used to say "the CPU probe has already
+        // identified", unconditionally, because the probe was the case in mind
+        // when it was written. But eraseIsRedundant() keys only on there BEING
+        // a volume for the CPU, and a volume can equally come from hub
+        // position -- which is what happens on an ordinary FreeWili, and what
+        // was observed on Linux while this note was being displayed. Telling a
+        // user a probe ran when none did is a false statement on a consent
+        // screen, in an app whose whole argument for being trusted is that it
+        // does not guess about which CPU is which.
+        const IdentitySource src = fullPlan[i].cpu == TargetCpu::Main
+                                       ? identity.mainSource : identity.displaySource;
+        const char* how = src == IdentitySource::VerifiedProbe
+                              ? "the CPU probe has already identified "
+                          : src == IdentitySource::HubLocation
+                              ? "its position on the board's USB hub already identifies "
+                          : src == IdentitySource::ProductString
+                              ? "its USB product string already identifies "
+                              : "this app has already identified ";
+        return std::string("The ERASE of the ") + cpu + " CPU is not in this plan: " + how +
+               volume + " as the " + cpu + " CPU sitting "
                "in its own bootloader, which is the state that erase existed to produce. "
                "Running it anyway would destroy nothing that is not about to be overwritten "
                "and would reboot the CPU, changing the drive letters this identification "
