@@ -1,4 +1,5 @@
 #include "ui/fwTabAppExplorer.h"
+#include "ui/fwUiScale.h"
 
 #include "catalog/fwCatalogEmbedded.h"   // loadEmbeddedImage
 #include "catalog/fwCatalogFilter.h"
@@ -278,7 +279,7 @@ void drawCategoryChips(const std::vector<std::string>& categories, std::string& 
 /// (flashDisabledReason, and the busy state). A
 /// double-click is a faster way to press that button, never a way around it.
 void drawEntryList(std::span<const CatalogEntry* const> filtered, std::string& selectedSlug,
-                   std::string& flashRequestSlug)
+                   std::string& flashRequestSlug, bool& rowActivated)
 {
     ImGui::BeginChild("##AppExplorerList", ImVec2(0, 0), ImGuiChildFlags_Border);
     for (const CatalogEntry* e : filtered) {
@@ -287,6 +288,7 @@ void drawEntryList(std::span<const CatalogEntry* const> filtered, std::string& s
         if (ImGui::Selectable(e->name.empty() ? "(unnamed)" : e->name.c_str(), isSelected,
                               ImGuiSelectableFlags_AllowDoubleClick)) {
             selectedSlug = e->slug;
+            rowActivated = true;
             // Selection happens on either click; the flash request only on the
             // second. IsMouseDoubleClicked is checked rather than
             // IsItemHovered+double, because Selectable has already told us it
@@ -585,26 +587,63 @@ void AppExplorerTab::draw(std::span<const CatalogEntry> entries, DeviceModel& de
     // fetch action stayed, as Online Update beside the filter chips below.
     const auto categories = categoriesOf(entries);
 
-    const float leftWidth = ImGui::GetContentRegionAvail().x * 0.38f;
-    ImGui::BeginChild("##AppExplorerLeft", ImVec2(leftWidth, 0), ImGuiChildFlags_Border);
+    // Phone-narrow: the two panes become a two-screen stack -- the list full
+    // width, and tapping a row navigates to the detail with a back button.
+    // Same components, same state; only the arrangement changes, so nothing
+    // behavioral (selection rules, flash gating) forks per layout.
+    const bool compact = g_uiCompact;
+    bool rowActivated = false;
 
-    char searchBuf[128];
-    copyToTextBuffer(searchBuf, sizeof(searchBuf), m_search);
-    ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::InputTextWithHint("##Search", ICON_MD_SEARCH " Search apps, tags, authors...",
-                                  searchBuf, sizeof(searchBuf)))
-        m_search = searchBuf;
+    if (compact && m_compactShowDetail) {
+        if (ImGui::Button(ICON_MD_ARROW_BACK " All apps")) {
+            m_compactShowDetail = false;
+            // Nothing consumed a pending double-click request; drop it rather
+            // than let it fire from the list screen next frame.
+            m_flashRequestSlug.clear();
+        }
+    }
 
-    // Filtered BEFORE the chips row is drawn, because the row now shows the
-    // count as well as the filters that produce it.
-    const auto filtered = filterEntries(entries, m_search, m_category);
-    drawCategoryChips(categories, m_category, remoteCatalog, remoteCatalogUrl,
-                      filtered.size(), entries.size());
+    const bool showList = !compact || !m_compactShowDetail;
+    if (showList) {
+        const float leftWidth = compact ? 0.0f : ImGui::GetContentRegionAvail().x * 0.38f;
+        ImGui::BeginChild("##AppExplorerLeft", ImVec2(leftWidth, 0), ImGuiChildFlags_Border);
 
-    drawEntryList(filtered, m_selectedSlug, m_flashRequestSlug);
+        char searchBuf[128];
+        copyToTextBuffer(searchBuf, sizeof(searchBuf), m_search);
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputTextWithHint("##Search", ICON_MD_SEARCH " Search apps, tags, authors...",
+                                      searchBuf, sizeof(searchBuf)))
+            m_search = searchBuf;
 
-    ImGui::EndChild();
-    ImGui::SameLine();
+        // Filtered BEFORE the chips row is drawn, because the row now shows the
+        // count as well as the filters that produce it.
+        const auto filtered = filterEntries(entries, m_search, m_category);
+        drawCategoryChips(categories, m_category, remoteCatalog, remoteCatalogUrl,
+                          filtered.size(), entries.size());
+
+        drawEntryList(filtered, m_selectedSlug, m_flashRequestSlug, rowActivated);
+
+        ImGui::EndChild();
+    }
+
+    if (compact) {
+        if (rowActivated) {
+            // Navigate NEXT frame: the list child already spent this frame's
+            // full height, and a zero-height detail pane drawn under it would
+            // flicker for one frame.
+            m_compactShowDetail = true;
+            servicePendingFlash(deviceModel, flashDialog);
+            return;
+        }
+        if (!m_compactShowDetail) {
+            // List screen: the request (if any) is carried to the detail
+            // screen next frame, where the usual gating consumes it.
+            servicePendingFlash(deviceModel, flashDialog);
+            return;
+        }
+    } else {
+        ImGui::SameLine();
+    }
 
     ImGui::BeginChild("##AppExplorerRight", ImVec2(0, 0), ImGuiChildFlags_Border);
 
