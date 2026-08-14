@@ -89,7 +89,8 @@ std::string flashDisabledReason(const CatalogEntry& entry, const DeviceView* dev
 /// platform other than the one it was compiled for.
 std::string flashDisabledReasonFor(bool deviceSupportAvailable,
                                     const CatalogEntry& entry, const DeviceView* device,
-                                    bool identityConfirmed = true);
+                                    bool identityConfirmed = true,
+                                    bool serialSupportAvailable = true);
 
 /// Why this entry cannot be flashed against a board whose one mounted RPI-RP2
 /// drive a verified CPU probe has measured to be the CPU this entry does not

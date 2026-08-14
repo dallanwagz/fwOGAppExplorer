@@ -523,18 +523,72 @@ FlashResult runFlashPlan(const FlashIo& io,
                             "same bootrom serial, so they cannot be told apart, and this "
                             "step was not attempted. Unmount one and try again.", i);
 
-        case GuardAction::RefuseUnidentified:
+        case GuardAction::RefuseUnidentified: {
+            // Where serial exists, this refusal is final: no port to touch and
+            // nothing mounted means there is genuinely nothing to work with,
+            // and waiting cannot change that -- the 1200-baud touch is the only
+            // thing that MAKES a drive appear, and it needed the port.
+            //
             // Deliberately "this step wrote nothing" rather than the flat
             // "nothing was written" this used to say: on a LegacyDirect plan
             // this is overwhelmingly the step-1 refusal that follows a
             // SUCCESSFUL step 0, and completedStepsNote() spells out what that
             // means. See its comment.
-            return failStep(FlashOutcome::RefusedUnidentified,
-                            std::string("the ") + cpu + " CPU could not be identified -- no "
-                            "serial port to reboot and no RPI-RP2 drive of its own, for " +
-                            std::to_string(kIdentifyWaitMs / 1000) + " seconds -- so this step "
-                            "wrote nothing. See the Recovery tab, or put that CPU into BOOTSEL "
-                            "by hand and try again.", i);
+            if (kSerialSupportAvailable)
+                return failStep(FlashOutcome::RefusedUnidentified,
+                                std::string("the ") + cpu + " CPU could not be identified -- no "
+                                "serial port to reboot and no RPI-RP2 drive of its own, for " +
+                                std::to_string(kIdentifyWaitMs / 1000) + " seconds -- so this step "
+                                "wrote nothing. See the Recovery tab, or put that CPU into BOOTSEL "
+                                "by hand and try again.", i);
+
+            // A serial-less platform (iPadOS). Here the USER is the touch: the
+            // red button held while plugging in is what raises the drive, and
+            // this wait is the window they do it in -- the same shape as
+            // TouchThenWait, with the reboot performed by hand instead of at
+            // 1200 baud. MEASURED on the iPad: without this, tapping Flash
+            // before the board was in BOOTSEL refused instantly with advice
+            // written for a desktop. Delta-based like every other wait; with
+            // nothing mounted the snapshot is empty and any arrival is ours.
+            const WaitReporter waiting{ progress, FlashPhase::WaitingForVolume, i, n,
+                                        step.cpu,
+                                        std::string("waiting for the ") + cpu +
+                                        " CPU's RPI-RP2 drive -- hold the board's RED "
+                                        "button while plugging it in",
+                                        kVolumeWaitMs };
+            const auto arrived = waitForNewVolume(io, volumes, step.cpu, waiting);
+            switch (arrived.outcome) {
+            case WaitOutcome::Ready:
+                break;
+            case WaitOutcome::Ambiguous:
+                return failStep(FlashOutcome::RefusedAmbiguous,
+                                "two RPI-RP2 volumes appeared at once; they cannot be told "
+                                "apart, so this step's image was not written.", i);
+            case WaitOutcome::TimedOut:
+                return failStep(FlashOutcome::Timeout,
+                                std::string("no RPI-RP2 drive appeared. Hold the board's RED "
+                                "button while plugging it in -- that is the ") + cpu +
+                                " CPU's bootloader -- then tap Flash again.", i);
+            case WaitOutcome::Cancelled:
+                return failStep(FlashOutcome::Aborted, "cancelled.", i);
+            }
+
+            // The drive that arrived still carries no identity -- nothing on
+            // this platform can name a CPU -- so the typed confirmation stays
+            // the guard, exactly as in RequireTypedConfirmation below. The user
+            // pressed the button, so the user is the one who knows.
+            if (!confirmationMatches(typedConfirmation, step.cpu)) {
+                FlashResult r = fail(FlashOutcome::NeedsConfirmation,
+                        std::string("an RPI-RP2 volume appeared. Which CPU it is cannot be "
+                        "determined from the mount, so type ") + cpu +
+                        " to confirm this is the right one.", i);
+                r.confirmationCpu = step.cpu;
+                r.resumable = true;
+                return r;
+            }
+            targetVolume = arrived.volume;
+            break;
+        }
 
         case GuardAction::RefuseWrongCpu: {
             const char* mine = cpuName(step.cpu);

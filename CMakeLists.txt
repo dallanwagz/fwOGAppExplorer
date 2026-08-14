@@ -330,9 +330,18 @@ if(APPLE AND NOT IOS)
         "-framework DiskArbitration")
 endif()
 if(IOS)
-    # NSURLSession is the transport where there is no libcurl to dlopen.
-    target_sources(fwog_platform PRIVATE src/platform/fwHttpNSURL.mm)
-    target_link_libraries(fwog_platform PRIVATE "-framework Foundation")
+    # NSURLSession is the transport where there is no libcurl to dlopen, and
+    # the folder grant (UIDocumentPicker + security-scoped bookmark) is the
+    # volume source where there is no mount table to scan.
+    target_sources(fwog_platform PRIVATE
+        src/platform/fwHttpNSURL.mm
+        src/platform/fwVolumeGrant.mm)
+    target_link_libraries(fwog_platform PRIVATE
+        "-framework Foundation" "-framework UIKit"
+        "-framework UniformTypeIdentifiers")
+    # fwVolumeGrant.mm reaches the UIKit window through SDL's window
+    # properties; the include path is all it needs from SDL.
+    target_link_libraries(fwog_platform PRIVATE SDL3::SDL3)
 endif()
 
 # ---------------------------------------------------------------------------

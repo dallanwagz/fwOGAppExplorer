@@ -6,24 +6,36 @@
 #include <string_view>
 #include <vector>
 
+#if defined(__APPLE__)
+  #include <TargetConditionals.h>
+#endif
+
 namespace fwog {
 
 // --------------------------------------------------------------------------
 // Platform capability
 // --------------------------------------------------------------------------
 
-#if defined(__APPLE__)
-  #include <TargetConditionals.h>
-#endif
-
 /// False where device detection and flashing cannot work at all (the web
-/// build, and -- for now -- the iPad build: Phase 1 of that port is catalog
-/// browsing only, with the folder-grant flash flow arriving in Phase 2).
-/// Guards UI affordances so nothing is offered that cannot happen.
-#if defined(__EMSCRIPTEN__) || (defined(__APPLE__) && !TARGET_OS_OSX)
+/// build). Guards UI affordances so nothing is offered that cannot happen.
+#if defined(__EMSCRIPTEN__)
 inline constexpr bool kDeviceSupportAvailable = false;
 #else
 inline constexpr bool kDeviceSupportAvailable = true;
+#endif
+
+/// False where SERIAL access does not exist even though volume flashing does
+/// -- iPadOS, which mounts the RP2040 bootrom drive but offers no serial API.
+/// What serial buys elsewhere: the 1200-baud BOOTSEL touch (entering BOOTSEL
+/// automatically instead of by the red button), CPU identification, and --
+/// critically -- REACHING THE DISPLAY CPU at all, which has no BOOTSEL button
+/// of its own. flashDisabledReasonFor() therefore refuses any plan with a
+/// DISPLAY-CPU step on such a platform: the engine would erase MAIN and then
+/// wait forever for a drive that can never appear.
+#if defined(__APPLE__) && !TARGET_OS_OSX
+inline constexpr bool kSerialSupportAvailable = false;
+#else
+inline constexpr bool kSerialSupportAvailable = true;
 #endif
 
 /// The one sentence shown wherever flashing is unavailable because the
@@ -38,15 +50,9 @@ inline constexpr bool kDeviceSupportAvailable = true;
 /// falling back to '?'.
 constexpr std::string_view platformLimitationNotice()
 {
-#if defined(__APPLE__) && !TARGET_OS_OSX
-    return "Flashing from this device is coming in a later build \xE2\x80\x94 for now, "
-           "browse the catalog here and flash from the desktop app. iPadOS cannot "
-           "reach serial ports, so features that need them stay on the desktop.";
-#else
     return "Device detection and flashing need the desktop app \xE2\x80\x94 a browser "
            "cannot reach USB mass storage or serial ports. Everything else on this "
            "page works.";
-#endif
 }
 
 // --------------------------------------------------------------------------

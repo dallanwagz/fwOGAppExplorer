@@ -66,7 +66,8 @@ std::vector<std::string> categoriesOf(std::span<const CatalogEntry> entries)
 
 std::string flashDisabledReasonFor(bool deviceSupportAvailable,
                                     const CatalogEntry& entry, const DeviceView* device,
-                                    bool identityConfirmed)
+                                    bool identityConfirmed,
+                                    bool serialSupportAvailable)
 {
     // FIRST, ahead of the no-device check (Task 21). On a platform that
     // cannot reach USB at all there is never a device to find, so "No
@@ -74,6 +75,22 @@ std::string flashDisabledReasonFor(bool deviceSupportAvailable,
     // cable the user could go and re-seat. Name the real blocker instead.
     if (!deviceSupportAvailable)
         return std::string(platformLimitationNotice());
+    // Ahead of the device checks for the same reason the platform gate is:
+    // on a serial-less platform (iPadOS) a DISPLAY-reaching plan is
+    // impossible no matter what is plugged in, and the DISPLAY CPU has no
+    // BOOTSEL button a user could press instead. Refusing here is what stops
+    // the engine from erasing MAIN and then waiting forever for a DISPLAY
+    // drive that can never appear.
+    if (!serialSupportAvailable) {
+        const auto plan = buildFlashPlan(entry);
+        const bool touchesDisplay = std::any_of(plan.begin(), plan.end(),
+            [](const FlashStep& s) { return s.cpu == TargetCpu::Display; });
+        if (touchesDisplay)
+            return "This install writes to the DISPLAY CPU, which cannot be "
+                   "reached from this device \xE2\x80\x94 it has no BOOTSEL button, and "
+                   "only the desktop app's serial access can reboot it into its "
+                   "bootloader. Use the desktop app for this one.";
+    }
     if (device == nullptr)
         return "No FreeWili is connected.";
     if (!device->isOg)
@@ -163,7 +180,8 @@ std::string mappedToTheWrongCpu(const CatalogEntry& entry, const CpuIdentity& id
 std::string flashDisabledReason(const CatalogEntry& entry, const DeviceView* device,
                                  bool identityConfirmed)
 {
-    return flashDisabledReasonFor(kDeviceSupportAvailable, entry, device, identityConfirmed);
+    return flashDisabledReasonFor(kDeviceSupportAvailable, entry, device, identityConfirmed,
+                                  kSerialSupportAvailable);
 }
 
 std::vector<CatalogEntry> excludeSlug(std::vector<CatalogEntry> entries, std::string_view slug)
