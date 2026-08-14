@@ -1,6 +1,8 @@
 #include "platform/fwVolume.h"
 
 #include "core/fwTypes.h"   // platformLimitationNotice (the Emscripten branch below)
+#include "platform/fwVolumeGrant.h"   // iOS: the granted-folder volume source
+#include <filesystem>
 
 #include <array>
 #include <fstream>
@@ -15,14 +17,19 @@
   #include <fcntl.h>
   #include <unistd.h>
   #if defined(__APPLE__)
-    // getmntinfo() -- macOS has no /proc/mounts -- and IOKit, which answers
-    // the USB-tree question /sys/bus/usb/devices answers on Linux.
+    #include <TargetConditionals.h>
+    // getmntinfo() -- macOS has no /proc/mounts -- and, on the Mac only,
+    // IOKit (the USB-tree question /sys/bus/usb/devices answers on Linux)
+    // plus DiskArbitration (the graceful pre-flash unmount). Neither
+    // framework is public API on iOS.
     #include <sys/param.h>
     #include <sys/ucred.h>
     #include <sys/mount.h>
-    #include <CoreFoundation/CoreFoundation.h>
-    #include <IOKit/IOKitLib.h>
-    #include <DiskArbitration/DiskArbitration.h>
+    #if TARGET_OS_OSX
+      #include <CoreFoundation/CoreFoundation.h>
+      #include <IOKit/IOKitLib.h>
+      #include <DiskArbitration/DiskArbitration.h>
+    #endif
   #endif
 #endif
 
@@ -327,7 +334,7 @@ struct ErrorModeGuard {
 };
 #endif
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) && TARGET_OS_OSX
 /// Cleanly unmount the volume through DiskArbitration, waiting for the verdict.
 ///
 /// Why this exists: the RP2040 bootrom detaches its device the instant the
@@ -609,6 +616,26 @@ std::vector<std::string> findRpiRp2Volumes()
     // is the machine: the real /proc/mounts and the real INFO_UF2.TXT. Keeping
     // them apart is what makes the filters testable -- with the file opened
     // inline, either could be deleted and nothing failed.
+#if defined(__APPLE__) && !TARGET_OS_OSX
+    // iOS: there is no mount table an app may scan; the candidate set is the
+    // one folder the user granted (fwVolumeGrant.h), whose bookmark survives
+    // the board replugging. The VERIFICATION is identical to every other
+    // POSIX platform -- the folder's own INFO_UF2.TXT must say Board-ID:
+    // RPI-RP2 -- so a grant to some random folder is never offered a flash.
+    if (auto path = grant::grantedVolumePath()) {
+        std::ifstream info(std::filesystem::path(*path) / "INFO_UF2.TXT",
+                           std::ios::binary);
+        if (info) {
+            std::array<char, 512> buf{};
+            info.read(buf.data(), buf.size());
+            if (detail::isRp2BootromInfo(
+                    std::string_view(buf.data(), size_t(info.gcount()))))
+                out.push_back(*path);
+        }
+    }
+    return out;
+#endif
+
     detail::VolumeIo io;
 
 #if defined(__APPLE__)
@@ -683,7 +710,7 @@ std::vector<std::string> findRpiRp2Volumes()
 
 int countBootselDevices()
 {
-#if defined(_WIN32) || defined(__EMSCRIPTEN__)
+#if defined(_WIN32) || defined(__EMSCRIPTEN__) || (defined(__APPLE__) && !TARGET_OS_OSX)
     // Not asked here. On Windows the drive-letter enumeration above is already
     // the whole answer -- there is no equivalent "device present but nothing
     // mounted it" state to distinguish, because Windows mounts it itself -- and
@@ -691,7 +718,7 @@ int countBootselDevices()
     // unmountedBootselNotice() produce nothing, so no caller has to branch on
     // the platform to decide whether to ask.
     return 0;
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) && TARGET_OS_OSX
     // The same question the Linux branch below asks of /sys/bus/usb/devices,
     // asked of the IOKit registry: one IOUSBHostDevice node per physical
     // device, so two boards in BOOTSEL count as two -- the by-label collapse
@@ -767,7 +794,7 @@ std::expected<void, std::string> copyToVolume(const std::filesystem::path& src,
     const auto srcSize = std::filesystem::file_size(src, ec);
     if (ec) return std::unexpected("cannot read " + src.string() + ": " + ec.message());
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) && TARGET_OS_OSX
     // BEFORE the first byte is written: take the volume off Finder's books.
     // See remountNoBrowse() for why this ordering is the only one that
     // prevents the "Disk Not Ejected Properly" notification -- once any block
@@ -783,9 +810,30 @@ std::expected<void, std::string> copyToVolume(const std::filesystem::path& src,
     const auto dst = std::filesystem::path(targetVolume) / src.filename();
     std::filesystem::copy_file(src, dst,
                                std::filesystem::copy_options::overwrite_existing, ec);
+#if defined(__APPLE__) && !TARGET_OS_OSX
+    // The bootrom detaches its device the instant the last UF2 block lands --
+    // routinely mid-copy for an image this small -- and iPadOS's file daemon
+    // surfaces every operation on the vanished volume as EIO, not the
+    // ENOENT/ENODEV the rules below key on. MEASURED on the first iPad flash:
+    // the board took the image, rebooted into it, and this function reported
+    // "Input/output error". Gone == accepted is the same rule as every other
+    // platform; the check that it really is GONE (INFO_UF2.TXT no longer
+    // reachable) is what keeps a genuine write failure -- an EIO with the
+    // drive still mounted -- reported as the failure it is.
+    const auto volumeVanished = [&targetVolume] {
+        std::error_code probeEc;
+        return !std::filesystem::exists(
+            std::filesystem::path(targetVolume) / "INFO_UF2.TXT", probeEc);
+    };
+    if (ec) {
+        if (volumeVanished()) return {};
+        return std::unexpected("copy to " + targetVolume + " failed: " + ec.message());
+    }
+#else
     if (ec) return std::unexpected("copy to " + targetVolume + " failed: " + ec.message());
+#endif
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) && TARGET_OS_OSX
     // Verify the copy while it is still readable from the page cache, then
     // unmount, which flushes every dirty page to the device. A clean unmount
     // subsumes the fsync below (unmount semantics: all dirty data reaches the
@@ -831,9 +879,15 @@ std::expected<void, std::string> copyToVolume(const std::filesystem::path& src,
     // directory entry that makes it findable are separate inodes, and only
     // fsync'ing the former is the classic half of this recipe that people get
     // wrong.
-    if (auto flushed = flushToDevice(dst); !flushed)
+    if (auto flushed = flushToDevice(dst); !flushed) {
+#if defined(__APPLE__) && !TARGET_OS_OSX
+        // Same EIO-on-vanish shape as the copy above: a flush that failed
+        // because the bootrom already took everything is a success report.
+        if (volumeVanished()) return {};
+#endif
         return std::unexpected("could not flush the image to " + volume + ": " +
                                flushed.error());
+    }
 #endif
 
     // The bootrom volume disappears the instant it accepts the image, so a

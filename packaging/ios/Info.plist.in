@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>      <string>en</string>
+    <key>CFBundleExecutable</key>             <string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
+    <key>CFBundleIdentifier</key>             <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
+    <key>CFBundleInfoDictionaryVersion</key>  <string>6.0</string>
+    <key>CFBundleName</key>                   <string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+    <key>CFBundlePackageType</key>            <string>APPL</string>
+    <key>CFBundleShortVersionString</key>     <string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
+    <key>CFBundleVersion</key>                <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
+    <!-- Empty launch-screen dict: required for the app to run at the display's
+         native resolution instead of a letterboxed compatibility mode. -->
+    <key>UILaunchScreen</key>                 <dict/>
+    <!-- The local catalog is the sandbox Documents folder (fwPaths.cpp), and
+         these two keys are what make it appear in the Files app so a user can
+         drop UF2s in. -->
+    <key>UIFileSharingEnabled</key>           <true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key> <true/>
+    <!-- HTTPS via the OS stack only -- exempt from export-compliance
+         documentation, and declaring it here skips the per-build question
+         in App Store Connect. -->
+    <key>ITSAppUsesNonExemptEncryption</key>  <false/>
+    <!-- Stated here explicitly: actool compiles the catalog but the merge
+         that would normally inject this key does not run against a
+         CMake-templated Info.plist. -->
+    <key>CFBundleIconName</key>               <string>AppIcon</string>
+    <!-- Required by App Store validation (ITMS-90683) because SDL3 compiles
+         camera and Bluetooth code into every app that links it, and the API
+         REFERENCES alone demand purpose strings. This app never invokes
+         either; the strings say so honestly rather than inventing a use. -->
+    <key>NSCameraUsageDescription</key>
+    <string>This app does not use the camera. The reference comes from a UI library (SDL); no camera access is ever requested.</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>This app does not use Bluetooth. The reference comes from a UI library (SDL); no Bluetooth access is ever requested.</string>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+    </array>
+</dict>
+</plist>

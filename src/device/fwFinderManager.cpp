@@ -1,25 +1,54 @@
+#include "device/fwFinderAvailable.h"
 #include "device/fwFinderManager.h"
 #include <cassert>
+#include <atomic>
 #include <chrono>
 
 namespace fwog {
 
-#ifdef __EMSCRIPTEN__
-// fwfinder is not available on the web. Provide no-op stubs.
+#ifndef FWOG_HAVE_FWFINDER
+// fwfinder is not available on the web or on iOS (its mac backend is IOKit,
+// which is not public API there, and there is no USB tree an iPad app may
+// walk anyway). Provide no-op stubs.
 fwFinderManager::~fwFinderManager() {}
 auto fwFinderManager::shutdown() noexcept -> void {}
 auto fwFinderManager::isRunning() noexcept -> bool { return false; }
 auto fwFinderManager::isActivelyScanning() noexcept -> bool { return false; }
+#if defined(__EMSCRIPTEN__)
 auto fwFinderManager::lastScanAge() noexcept -> std::optional<std::chrono::milliseconds> {
     // Never scanned, and never will be. Reporting "unknown age" rather than a
     // fresh-looking zero is what keeps every freshness gate downstream failing
     // closed on the web build instead of being handed a lie.
     return std::nullopt;
 }
-auto fwFinderManager::requestRefresh(uint32_t) noexcept -> void {}
 auto fwFinderManager::getDevices(bool) noexcept -> std::expected<Fw::FreeWiliDevices, std::string> {
     return Fw::FreeWiliDevices{};
 }
+#else
+// iOS. Unlike the web, a "scan" here is REAL and synchronous: getDevices() is
+// called once per frame by DeviceModel::refresh(), and the device list it
+// feeds (the granted-drive check in fwDeviceModel.cpp's defaultScan) is
+// re-evaluated on that same call. So the honest lastScanAge is the time since
+// getDevices() last ran -- without this, selectionUnchangedFresh() answered
+// StaleSnapshot forever and the flash button's freshness gate timed out with
+// "no recent scan completed" on a board that was being re-checked 60 times a
+// second. MEASURED on the iPad; that was Phase 2's first field bug.
+namespace { std::atomic<std::chrono::steady_clock::time_point::rep> g_lastScan{0}; }
+auto fwFinderManager::lastScanAge() noexcept -> std::optional<std::chrono::milliseconds> {
+    const auto raw = g_lastScan.load(std::memory_order_relaxed);
+    if (raw == 0) return std::nullopt;   // nothing has asked yet
+    const auto last = std::chrono::steady_clock::time_point(
+        std::chrono::steady_clock::duration(raw));
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - last);
+}
+auto fwFinderManager::getDevices(bool) noexcept -> std::expected<Fw::FreeWiliDevices, std::string> {
+    g_lastScan.store(std::chrono::steady_clock::now().time_since_epoch().count(),
+                     std::memory_order_relaxed);
+    return Fw::FreeWiliDevices{};
+}
+#endif
+auto fwFinderManager::requestRefresh(uint32_t) noexcept -> void {}
 auto fwFinderManager::instance() noexcept -> fwFinderManager& {
     static fwFinderManager s; return s;
 }
@@ -234,6 +263,6 @@ auto fwFinderManager::run() noexcept -> void {
     _isRunning = false;
 }
 
-#endif // !__EMSCRIPTEN__
+#endif // real (non-web, non-iOS) implementation
 
 } // namespace fwog

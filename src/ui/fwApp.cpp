@@ -1,5 +1,9 @@
 #include "ui/fwApp.h"
 
+#if defined(__APPLE__)
+  #include <TargetConditionals.h>   // TARGET_OS_OSX: the safe-area inset below
+#endif
+
 #include "ui/fwTheme.h"
 #include "ui/fwFonts.h"
 #include "ui/fwDeviceBar.h"
@@ -65,7 +69,18 @@ struct Settings {
     int windowY = -1;
     int windowW = 1280;
     int windowH = 800;
+#if defined(__APPLE__) && !TARGET_OS_OSX
+    // The iPad build ships with the live catalog as its default: on the
+    // platform whose whole point is browsing-and-flashing away from a desk,
+    // an empty remote URL would mean typing a long URL on glass before the
+    // app shows anything. The user can still clear or replace it in
+    // Settings; a saved settings.ini value always wins over this default.
+    std::string remoteCatalogUrl =
+        "https://github.com/dallanwagz/fwOGAppExplorer/releases/download/"
+        "catalog-v1/apps.json";
+#else
     std::string remoteCatalogUrl;
+#endif
 };
 
 Theme themeFromName(const std::string& name)
@@ -472,8 +487,22 @@ int App::run()
         ImGui::NewFrame();
 
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos(viewport->WorkPos);
-        ImGui::SetNextWindowSize(viewport->WorkSize);
+        ImVec2 rootPos  = viewport->WorkPos;
+        ImVec2 rootSize = viewport->WorkSize;
+#if defined(__APPLE__) && !TARGET_OS_OSX
+        // iPadOS draws the system status bar (and rounds the display's
+        // corners) OVER the window, and the viewport does not account for it
+        // -- measured on the device: the clock and battery sat on top of the
+        // device bar. SDL_GetWindowSafeArea is the region the OS promises not
+        // to cover; inset the root window to it. Window coords, same space as
+        // the viewport, so plain addition is correct.
+        if (SDL_Rect safe{}; SDL_GetWindowSafeArea(window, &safe)) {
+            rootPos  = ImVec2(rootPos.x + float(safe.x), rootPos.y + float(safe.y));
+            rootSize = ImVec2(float(safe.w), float(safe.h));
+        }
+#endif
+        ImGui::SetNextWindowPos(rootPos);
+        ImGui::SetNextWindowSize(rootSize);
         // No ImGuiWindowFlags_MenuBar: the theme picker was this window's only
         // menu, and it now lives in the device bar immediately left of Rescan
         // (see DeviceBar::draw). An empty menu bar would still reserve its row

@@ -7,6 +7,10 @@
 #include <imgui.h>
 #include <IconsMaterialDesign.h>
 
+#if defined(__APPLE__) && !TARGET_OS_OSX
+  #include "platform/fwVolumeGrant.h"   // the grant button below
+#endif
+
 #include <optional>
 #include <string>
 
@@ -119,9 +123,14 @@ void DeviceBar::draw(DeviceModel& model, const std::string& identificationNote,
         bannerDevice.has_value() && bannerDevice->isOg
         && ogBootloaderState(bannerDevice->identity) == OgBootloaderState::Missing;
 
-    const float barHeight =
+    float barHeight =
         kBarHeight + (identificationNote.empty() ? 0.0f : kIdentificationNoteHeight)
                    + (lacksBootloader ? kBootloaderBannerHeight : 0.0f);
+#if defined(__APPLE__) && !TARGET_OS_OSX
+    // The grant prompt (two wrapped lines + a button) needs more room than a
+    // device row; sized here because the child cannot grow after it begins.
+    if (model.devices().empty()) barHeight += 24.0f;
+#endif
     ImGui::BeginChild("##DeviceBar", ImVec2(0.0f, barHeight), ImGuiChildFlags_Border);
 
     ImGui::TextUnformatted(ICON_MD_USB " Devices");
@@ -218,7 +227,21 @@ void DeviceBar::draw(DeviceModel& model, const std::string& identificationNote,
 
     const auto& devices = model.devices();
     if (devices.empty()) {
+#if defined(__APPLE__) && !TARGET_OS_OSX
+        // iPadOS cannot enumerate USB, so "no FreeWili detected" is not a
+        // statement this build can ever make -- what it can say is that the
+        // one thing flashing here needs, the granted RPI-RP2 folder, has not
+        // been granted yet. The button opens the system folder picker; once
+        // a folder is granted the scan publishes the synthetic device row
+        // (fwDeviceModel.cpp) and this branch stops rendering.
+        ImGui::TextWrapped("To flash from this iPad: hold the RED button on the "
+                           "board while plugging it in, then grant this app "
+                           "access to the RPI-RP2 drive that appears.");
+        if (ImGui::Button(ICON_MD_FOLDER_OPEN " Grant access to RPI-RP2..."))
+            grant::presentGrantPicker();
+#else
         ImGui::TextDisabled("No FreeWili detected. Connect one over USB.");
+#endif
     } else {
         // One selected() call per frame, not per row: refresh() and
         // selected() are each O(scan)/O(devices), and this keeps the row
@@ -226,6 +249,15 @@ void DeviceBar::draw(DeviceModel& model, const std::string& identificationNote,
         const std::optional<DeviceView> selected = model.selected();
         for (size_t i = 0; i < devices.size(); ++i)
             drawRow(model, i, devices[i], selected);
+#if defined(__APPLE__) && !TARGET_OS_OSX
+        // The grant's live state, every frame: its failure modes differ in
+        // remedy (plug the board in vs. re-grant) and nothing else on screen
+        // can tell them apart. The Re-grant button stays available because a
+        // dev-reinstalled app can hold a bookmark that resolves to nothing.
+        ImGui::TextColored(kMutedColor, "Drive: %s", grant::statusDescription().c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Re-grant...")) grant::presentGrantPicker();
+#endif
     }
 
     // Below the rows, because it is a statement about the drives rather than

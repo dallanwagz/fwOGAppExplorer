@@ -218,7 +218,9 @@ endif()
 # Split from fwog_core because fwFinderManager pulls in fwfinder, which does
 # not exist for the Emscripten/web build.
 # ---------------------------------------------------------------------------
-if(NOT EMSCRIPTEN)
+if(NOT EMSCRIPTEN AND NOT IOS)
+    # (NOT IOS: fwfinder's Apple backend is IOKit, which is not public API on
+    # iOS; fwFinderManager.cpp compiles its no-op stub there, same as the web.)
     # fwfinder defaults its own test suite to ON, which would otherwise
     # register ~33 googletest cases (live Windows device enumeration,
     # environment-dependent) into this project's `ctest` run. A failure
@@ -255,7 +257,7 @@ add_library(fwog_device STATIC
     src/catalog/fwCatalogFilter.cpp
 )
 target_link_libraries(fwog_device PUBLIC fwog_core)
-if(NOT EMSCRIPTEN)
+if(NOT EMSCRIPTEN AND NOT IOS)
     target_link_libraries(fwog_device PUBLIC fwfinder-static)
 endif()
 
@@ -292,7 +294,7 @@ if(WIN32)
     # registry key. See src/platform/fwSerialPorts.h.
     target_link_libraries(fwog_platform PRIVATE setupapi)
 endif()
-if(APPLE)
+if(APPLE AND NOT IOS)
     # IOKit is the macOS answer to what sysfs answers on Linux: which USB
     # device a /dev/cu.* port belongs to (fwSerialPorts.cpp) and how many
     # RP2040s are sitting in BOOTSEL (fwVolume.cpp). fwfinder links the same
@@ -302,6 +304,20 @@ if(APPLE)
         # DiskArbitration: the clean unmount after a flash that keeps macOS
         # from posting "Disk Not Ejected Properly" when the bootrom reboots.
         "-framework DiskArbitration")
+endif()
+if(IOS)
+    # NSURLSession is the transport where there is no libcurl to dlopen, and
+    # the folder grant (UIDocumentPicker + security-scoped bookmark) is the
+    # volume source where there is no mount table to scan.
+    target_sources(fwog_platform PRIVATE
+        src/platform/fwHttpNSURL.mm
+        src/platform/fwVolumeGrant.mm)
+    target_link_libraries(fwog_platform PRIVATE
+        "-framework Foundation" "-framework UIKit"
+        "-framework UniformTypeIdentifiers")
+    # fwVolumeGrant.mm reaches the UIKit window through SDL's window
+    # properties; the include path is all it needs from SDL.
+    target_link_libraries(fwog_platform PRIVATE SDL3::SDL3)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -458,6 +474,45 @@ target_compile_definitions(fwOGAppExplorer PRIVATE
 if(NOT EMSCRIPTEN)
     set_target_properties(fwOGAppExplorer PROPERTIES WIN32_EXECUTABLE ON)
 endif()
+
+# ---------------------------------------------------------------------------
+# iOS: the executable becomes an .app bundle, signed by Xcode. The team id is
+# a cache variable rather than a literal so the repo does not hard-code one
+# developer's account; the ios preset supplies it.
+# ---------------------------------------------------------------------------
+if(IOS)
+    set(FWOG_IOS_DEV_TEAM "" CACHE STRING "Apple Development Team id for iOS signing")
+    set_target_properties(fwOGAppExplorer PROPERTIES
+        MACOSX_BUNDLE ON
+        MACOSX_BUNDLE_BUNDLE_NAME "OG App Explorer"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.dallanwagner.fwogexplorer"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "1"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/packaging/ios/Info.plist.in"
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.dallanwagner.fwogexplorer"
+        XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
+        XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+        # Without these two, `xcodebuild archive` produces a GENERIC archive
+        # (no Products/Applications, no ApplicationProperties) that
+        # -exportArchive offers zero distribution methods for -- CMake's
+        # generated targets default to SKIP_INSTALL=YES with no install path.
+        XCODE_ATTRIBUTE_SKIP_INSTALL "NO"
+        XCODE_ATTRIBUTE_INSTALL_PATH "$(LOCAL_APPS_DIR)"
+        # App Store validation refuses a bundle with no asset-catalog icon
+        # (CFBundleIconName + compiled AppIcon); the catalog below carries a
+        # single 1024px icon Xcode derives every size from. dwarf-with-dsym so
+        # the archive has symbols to upload.
+        XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon"
+        XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT "dwarf-with-dsym"
+    )
+    target_sources(fwOGAppExplorer PRIVATE packaging/ios/Assets.xcassets)
+    set_source_files_properties(packaging/ios/Assets.xcassets PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
+    if(FWOG_IOS_DEV_TEAM)
+        set_target_properties(fwOGAppExplorer PROPERTIES
+            XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "${FWOG_IOS_DEV_TEAM}")
+    endif()
+endif()
 # CMAKE_MSVC_RUNTIME_LIBRARY (set near the top of this file) already
 # governs the static CRT for every target, this one included.
 
@@ -523,6 +578,8 @@ endif()
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
+
+if(NOT IOS)   # the suite runs on the host platforms; a device has no ctest
 
 FetchContent_Declare(doctest
     GIT_REPOSITORY https://github.com/doctest/doctest.git
@@ -592,3 +649,5 @@ endif()
 if(NOT EMSCRIPTEN)
     add_test(NAME fwog_tests COMMAND fwog_tests)
 endif()
+
+endif()   # NOT IOS

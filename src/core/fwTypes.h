@@ -6,6 +6,10 @@
 #include <string_view>
 #include <vector>
 
+#if defined(__APPLE__)
+  #include <TargetConditionals.h>
+#endif
+
 namespace fwog {
 
 // --------------------------------------------------------------------------
@@ -18,6 +22,20 @@ namespace fwog {
 inline constexpr bool kDeviceSupportAvailable = false;
 #else
 inline constexpr bool kDeviceSupportAvailable = true;
+#endif
+
+/// False where SERIAL access does not exist even though volume flashing does
+/// -- iPadOS, which mounts the RP2040 bootrom drive but offers no serial API.
+/// What serial buys elsewhere: the 1200-baud BOOTSEL touch (entering BOOTSEL
+/// automatically instead of by the red button), CPU identification, and --
+/// critically -- REACHING THE DISPLAY CPU at all, which has no BOOTSEL button
+/// of its own. flashDisabledReasonFor() therefore refuses any plan with a
+/// DISPLAY-CPU step on such a platform: the engine would erase MAIN and then
+/// wait forever for a drive that can never appear.
+#if defined(__APPLE__) && !TARGET_OS_OSX
+inline constexpr bool kSerialSupportAvailable = false;
+#else
+inline constexpr bool kSerialSupportAvailable = true;
 #endif
 
 /// The one sentence shown wherever flashing is unavailable because the
