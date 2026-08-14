@@ -492,7 +492,22 @@ if(IOS)
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.dallanwagner.fwogexplorer"
         XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
         XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+        # Without these two, `xcodebuild archive` produces a GENERIC archive
+        # (no Products/Applications, no ApplicationProperties) that
+        # -exportArchive offers zero distribution methods for -- CMake's
+        # generated targets default to SKIP_INSTALL=YES with no install path.
+        XCODE_ATTRIBUTE_SKIP_INSTALL "NO"
+        XCODE_ATTRIBUTE_INSTALL_PATH "$(LOCAL_APPS_DIR)"
+        # App Store validation refuses a bundle with no asset-catalog icon
+        # (CFBundleIconName + compiled AppIcon); the catalog below carries a
+        # single 1024px icon Xcode derives every size from. dwarf-with-dsym so
+        # the archive has symbols to upload.
+        XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon"
+        XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT "dwarf-with-dsym"
     )
+    target_sources(fwOGAppExplorer PRIVATE packaging/ios/Assets.xcassets)
+    set_source_files_properties(packaging/ios/Assets.xcassets PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
     if(FWOG_IOS_DEV_TEAM)
         set_target_properties(fwOGAppExplorer PROPERTIES
             XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "${FWOG_IOS_DEV_TEAM}")
