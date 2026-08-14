@@ -18,6 +18,14 @@
          drop UF2s in. -->
     <key>UIFileSharingEnabled</key>           <true/>
     <key>LSSupportsOpeningDocumentsInPlace</key> <true/>
+    <!-- HTTPS via the OS stack only -- exempt from export-compliance
+         documentation, and declaring it here skips the per-build question
+         in App Store Connect. -->
+    <key>ITSAppUsesNonExemptEncryption</key>  <false/>
+    <!-- Stated here explicitly: actool compiles the catalog but the merge
+         that would normally inject this key does not run against a
+         CMake-templated Info.plist. -->
+    <key>CFBundleIconName</key>               <string>AppIcon</string>
     <key>UISupportedInterfaceOrientations</key>
     <array>
         <string>UIInterfaceOrientationLandscapeLeft</string>
