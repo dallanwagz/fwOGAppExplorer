@@ -58,9 +58,9 @@ on first launch, so the apps are there without anything being bundled. Drop a
 development packages, it has one shared-library dependency Windows does not, and
 serial-port permissions usually need a one-time setup step.
 
-**macOS** builds, tests green and runs, also from source — see [macOS](#macos).
-It needs nothing beyond CMake and Ninja, but it has not yet flashed a real
-board, and that section says exactly what that means.
+**macOS** works and has flashed a real board, also from source — see
+[macOS](#macos). It needs nothing beyond CMake and Ninja, and it has the
+smoothest permission story of the three platforms.
 
 ## What is new in v2
 
@@ -561,13 +561,22 @@ install**; and the `LegacyDirect` restore. Timings and serial numbers are in
 
 ## macOS
 
-macOS builds, tests green, and runs — but **no flash has yet been performed on a
-real board from a Mac**, which puts it a step behind Linux on the verification
-ladder. What has been verified: the full build (`mac-clang-release`, Apple clang,
-arm64), the complete test suite (553 cases / 2167 assertions), and the app
-launching with a working UI. What has not: everything in
-[`docs/hardware-verification.md`](docs/hardware-verification.md) that needs a
-board on the cable.
+macOS builds, tests green, runs, and **has flashed a real board** — including
+the one path Linux never exercised. Verified against an attached FreeWili 1-OG
+(serial FW4300): device detection and CPU identification by hub position;
+product strings read from the IO registry; and the **App Explorer `OgApp`
+flash end to end** — the 1200-baud touch, `RPI-RP2` volume discovery, the
+copy with `F_FULLFSYNC`, MAIN provisioned, and the display bootloader carrying
+the embedded DISPLAY image across the inter-CPU link, confirmed by both CPUs
+re-enumerating with the new app's product strings. Also verified: the full
+build (`mac-clang-release`, Apple clang, arm64), the complete test suite
+(553 cases / 2167 assertions), and the signed+notarized `.app`.
+
+Not verified on macOS: the display-bootloader install and `LegacyDirect`
+restore flows (the attached board already had its bootloader), the CPU-prober
+recovery flow, and two boards at once. See
+[`docs/hardware-verification.md`](docs/hardware-verification.md) for the
+per-flow ledger.
 
 ### Building on macOS
 

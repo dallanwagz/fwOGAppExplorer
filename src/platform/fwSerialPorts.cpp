@@ -427,8 +427,18 @@ std::vector<SerialPortInfo> listSerialPortInfo()
             attrs.idVendor = hexField(*vid, 4);
         if (const auto pid = ioNumberProp(svc, CFSTR("idProduct")))
             attrs.idProduct = hexField(*pid, 4);
-        if (const auto iface = ioNumberProp(svc, CFSTR("bInterfaceNumber")))
-            attrs.bInterfaceNumber = hexField(*iface, 2);
+        // bInterfaceNumber is deliberately NOT reported, and this is the one
+        // place this branch knowingly diverges from Linux. MEASURED against an
+        // attached FreeWili 1-OG: the ancestor interface of an IOSerialBSDClient
+        // here is the CDC DATA interface -- both 093C CDC ports read back
+        // bInterfaceNumber=1 -- where Linux's ttyACM reports the COMM
+        // interface, 0. Reporting the honest "01" would make
+        // looksLikeProberUsbId() refuse the prober's own port (it accepts
+        // interface 00 or none), and mapping 1 back to 0 would be inventing a
+        // number the registry did not say. Omitting it loses nothing that
+        // property exists to protect: the rule's target is pico_stdio_usb's
+        // Reset interface (2), which never owns a serial node on macOS, so
+        // there is no wrong-interface port here to refuse.
         if (const auto loc = ioNumberProp(svc, CFSTR("locationID")))
             attrs.busId = hexField(*loc, 8);
         // makeLinuxUsbId() returns "" unless vendor+product both read back as
