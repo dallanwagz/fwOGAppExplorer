@@ -255,6 +255,11 @@ void FlashDialog::draw(DeviceModel& deviceModel, const std::function<void(Recove
     // closed by Escape either -- that is what makes "cannot be dismissed
     // with Escape while Running" true structurally, not merely by a state
     // check here that could be bypassed.
+    // AutoResize against a ceiling: on a phone-narrow viewport an unclamped
+    // modal can autosize wider than the screen and put its buttons off-edge.
+    const ImVec2 work = ImGui::GetMainViewport()->WorkSize;
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0),
+                                        ImVec2(work.x * 0.95f, work.y * 0.95f));
     if (!ImGui::BeginPopupModal(kPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         return;
 

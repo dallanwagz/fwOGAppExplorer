@@ -111,6 +111,9 @@ private:
     std::string m_search;
     std::string m_category;       ///< empty == "All"
     std::string m_selectedSlug;   ///< empty == nothing selected
+    /// Compact (phone) layout only: the stack position -- false shows the
+    /// full-width list, true shows the detail screen with a back button.
+    bool m_compactShowDetail = false;
 
     /// Recomputed only when the selection changes -- see loadUf2Summary(), which
     /// reads the whole image and walks every block of it.

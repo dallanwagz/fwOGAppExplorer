@@ -5,6 +5,7 @@
 #endif
 
 #include "ui/fwTheme.h"
+#include "ui/fwUiScale.h"
 #include "ui/fwFonts.h"
 #include "ui/fwDeviceBar.h"
 #include "ui/fwTabAppExplorer.h"
@@ -527,6 +528,17 @@ int App::run()
             rootSize = ImVec2(float(safe.w), float(safe.h));
         }
 #endif
+        // Phone-narrow viewports get single-pane layouts and touch-sized
+        // spacing. 700 points comfortably separates every iPhone (390-440
+        // portrait, ~650-930 landscape splits either side -- landscape
+        // phones get the desktop layout, which fits) from iPad and desktop.
+        g_uiCompact = rootSize.x < 700.0f;
+        const int compactStyleVars = g_uiCompact ? 3 : 0;
+        if (g_uiCompact) {
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 8.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 8.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 16.0f);
+        }
         ImGui::SetNextWindowPos(rootPos);
         ImGui::SetNextWindowSize(rootSize);
         // No ImGuiWindowFlags_MenuBar: the theme picker was this window's only
@@ -598,7 +610,7 @@ int App::run()
         // Firmware tab losing focus (Task 22 fix round) -- see below.
         const int previousTab = lastTab;
 
-        if (ImGui::BeginTabBar("##MainTabs")) {
+        if (ImGui::BeginTabBar("##MainTabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
             // Consumed HERE, at the top, rather than after the loop. A request
             // can now be raised from INSIDE the loop -- the Recovery tab's "you
             // can flash that CPU now" buttons are drawn by recoveryTab.draw(),
@@ -759,6 +771,7 @@ int App::run()
         });
 
         ImGui::End();
+        ImGui::PopStyleVar(compactStyleVars);
 
         ImGui::Render();
         // ImGui lays out in window points; with SDL_WINDOW_HIGH_PIXEL_DENSITY
