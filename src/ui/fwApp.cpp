@@ -69,7 +69,18 @@ struct Settings {
     int windowY = -1;
     int windowW = 1280;
     int windowH = 800;
+#if defined(__APPLE__) && !TARGET_OS_OSX
+    // The iPad build ships with the live catalog as its default: on the
+    // platform whose whole point is browsing-and-flashing away from a desk,
+    // an empty remote URL would mean typing a long URL on glass before the
+    // app shows anything. The user can still clear or replace it in
+    // Settings; a saved settings.ini value always wins over this default.
+    std::string remoteCatalogUrl =
+        "https://github.com/dallanwagz/fwOGAppExplorer/releases/download/"
+        "catalog-v1/apps.json";
+#else
     std::string remoteCatalogUrl;
+#endif
 };
 
 Theme themeFromName(const std::string& name)

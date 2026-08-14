@@ -7,6 +7,9 @@
 #include "device/fwDeviceRecords.h"
 #include "device/fwCpuIdentify.h"
 #endif
+#if defined(__APPLE__) && !defined(FWOG_HAVE_FWFINDER)
+#include "platform/fwVolumeGrant.h"   // iOS: the granted-drive device below
+#endif
 
 #include <utility>
 
@@ -66,6 +69,25 @@ std::expected<std::vector<DeviceView>, std::string> defaultScan()
         view.isOg     = (device.deviceType == Fw::DeviceType::FreeWili);
         view.identity = identifyCpus(toCpuPortRecords(device));
         view.uniqueID = device.uniqueID;
+        next.push_back(std::move(view));
+    }
+#elif defined(__APPLE__)
+    // iOS: there is no USB enumeration, but flashing does not need one -- it
+    // needs the granted RPI-RP2 folder (fwVolumeGrant.h). Once a grant
+    // exists, publish ONE synthetic device representing it, so the whole
+    // downstream flow -- selection, the flash button, the dialog, the
+    // engine -- runs unchanged. Its identity is deliberately EMPTY: no ports
+    // (there are none) and no volumes (never pre-claimed), which lands the
+    // engine in its no-identity arm, where a single mounted drive asks for
+    // the typed CPU confirmation. On an iPad that prompt is exactly right:
+    // the user is the one who held the red button, so the user is the one
+    // who knows which CPU the drive is.
+    if (grant::hasGrant()) {
+        DeviceView view;
+        view.name     = "FREE-WILi (via granted RPI-RP2 drive)";
+        view.serial   = "RPI-RP2";
+        view.isOg     = true;
+        view.uniqueID = 1;   // one synthetic slot; stable across scans
         next.push_back(std::move(view));
     }
 #endif
