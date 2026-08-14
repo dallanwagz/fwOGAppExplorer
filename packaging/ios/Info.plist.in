@@ -26,6 +26,14 @@
          that would normally inject this key does not run against a
          CMake-templated Info.plist. -->
     <key>CFBundleIconName</key>               <string>AppIcon</string>
+    <!-- Required by App Store validation (ITMS-90683) because SDL3 compiles
+         camera and Bluetooth code into every app that links it, and the API
+         REFERENCES alone demand purpose strings. This app never invokes
+         either; the strings say so honestly rather than inventing a use. -->
+    <key>NSCameraUsageDescription</key>
+    <string>This app does not use the camera. The reference comes from a UI library (SDL); no camera access is ever requested.</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>This app does not use Bluetooth. The reference comes from a UI library (SDL); no Bluetooth access is ever requested.</string>
     <key>UISupportedInterfaceOrientations</key>
     <array>
         <string>UIInterfaceOrientationLandscapeLeft</string>
