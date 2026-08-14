@@ -14,6 +14,15 @@
   #include <cstring>
   #include <fcntl.h>
   #include <unistd.h>
+  #if defined(__APPLE__)
+    // getmntinfo() -- macOS has no /proc/mounts -- and IOKit, which answers
+    // the USB-tree question /sys/bus/usb/devices answers on Linux.
+    #include <sys/param.h>
+    #include <sys/ucred.h>
+    #include <sys/mount.h>
+    #include <CoreFoundation/CoreFoundation.h>
+    #include <IOKit/IOKitLib.h>
+  #endif
 #endif
 
 // VERIFIED ON LINUX against a real FreeWili 1-OG, on the MAIN CPU.
@@ -360,7 +369,18 @@ std::expected<void, std::string> flushToDevice(const std::filesystem::path& file
         return std::unexpected(std::string("cannot reopen the written file: ") +
                                std::strerror(errno));
     }
+#if defined(__APPLE__)
+    // fsync() on macOS is documented NOT to force the write through the drive's
+    // own cache; F_FULLFSYNC is the call that does, and this function exists
+    // precisely to close the "reported success while bytes were still in
+    // flight" gap. A filesystem that does not support F_FULLFSYNC (msdos is not
+    // guaranteed to) falls back to the plain fsync rather than failing a flash
+    // over a durability nicety the platform declined to provide.
+    int rc = ::fcntl(fd, F_FULLFSYNC);
+    if (rc != 0) rc = ::fsync(fd);
+#else
     const int rc = ::fsync(fd);
+#endif
     const int fsyncErrno = errno;
     ::close(fd);
     if (rc != 0 && !vanished(fsyncErrno))
@@ -418,12 +438,56 @@ std::vector<std::string> findRpiRp2Volumes()
     // inline, either could be deleted and nothing failed.
     detail::VolumeIo io;
 
+#if defined(__APPLE__)
+    // No /proc/mounts here; getmntinfo() is the same table from the kernel's
+    // own hand. It is rendered into /proc/mounts's line format so that
+    // detail::selectRpiRp2Volumes() -- the filters, the tests that pin them,
+    // and the octal unescaping -- stays one shared implementation. The
+    // escaping below is the exact inverse of detail::unescapeMount(): macOS
+    // mounts a SECOND volume with the same label at "/Volumes/RPI-RP2 1", and
+    // a space fed unescaped into a whitespace-split parser would truncate the
+    // mount point at "/Volumes/RPI-RP2" -- a path that names the OTHER board's
+    // volume. The fstype macOS gives a FAT volume is "msdos", which the shared
+    // filter already accepts for the manually-mounted Linux case.
+    io.readMounts = [] {
+        const auto escaped = [](const char* s) {
+            std::string out;
+            for (; *s; ++s) {
+                if (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\\') {
+                    const unsigned c = static_cast<unsigned char>(*s);
+                    out += { '\\', char('0' + (c >> 6)), char('0' + ((c >> 3) & 7)),
+                             char('0' + (c & 7)) };
+                } else {
+                    out.push_back(*s);
+                }
+            }
+            return out;
+        };
+        // MNT_NOWAIT: the cached table, no per-filesystem statfs round trip.
+        // This runs in the flash worker's ~250ms poll loop, and a stalled
+        // network mount must not be allowed to hold that loop up just to
+        // refresh size fields nothing here reads.
+        struct statfs* mounts = nullptr;
+        const int n = ::getmntinfo(&mounts, MNT_NOWAIT);
+        std::string out;
+        for (int i = 0; i < n; ++i) {
+            out += escaped(mounts[i].f_mntfromname);
+            out += ' ';
+            out += escaped(mounts[i].f_mntonname);
+            out += ' ';
+            out += mounts[i].f_fstypename;   // kernel identifier, never escaped
+            out += " - 0 0\n";
+        }
+        return out;
+    };
+#else
     io.readMounts = [] {
         std::ifstream f("/proc/mounts", std::ios::binary);
         std::ostringstream ss;
         ss << f.rdbuf();
         return ss.str();
     };
+#endif
 
     io.readInfoUf2 = [](const std::string& mountPoint) -> std::optional<std::string> {
         std::ifstream info(std::filesystem::path(mountPoint) / "INFO_UF2.TXT",
@@ -454,6 +518,36 @@ int countBootselDevices()
     // unmountedBootselNotice() produce nothing, so no caller has to branch on
     // the platform to decide whether to ask.
     return 0;
+#elif defined(__APPLE__)
+    // The same question the Linux branch below asks of /sys/bus/usb/devices,
+    // asked of the IOKit registry: one IOUSBHostDevice node per physical
+    // device, so two boards in BOOTSEL count as two -- the by-label collapse
+    // described below cannot happen here either. Any failure returns 0, which
+    // silences unmountedBootselNotice() rather than inventing a device.
+    //
+    // (In practice macOS auto-mounts the bootrom volume like Windows does, so
+    // this notice should rarely fire -- but "device present, nothing mounted"
+    // IS reachable here, e.g. after `diskutil unmount`, so the honest count is
+    // computed rather than hard-coded to 0 on the Windows argument.)
+    CFMutableDictionaryRef match = IOServiceMatching("IOUSBHostDevice");
+    if (!match) return 0;
+    const int32_t vid = 0x2e8a, pid = 0x0003;   // "RP2 Boot", same as below
+    CFNumberRef v = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &vid);
+    CFNumberRef p = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &pid);
+    CFDictionarySetValue(match, CFSTR("idVendor"), v);
+    CFDictionarySetValue(match, CFSTR("idProduct"), p);
+    CFRelease(v);
+    CFRelease(p);
+    io_iterator_t it = IO_OBJECT_NULL;
+    // IOServiceGetMatchingServices consumes `match` whether it succeeds or not.
+    if (IOServiceGetMatchingServices(kIOMainPortDefault, match, &it) != KERN_SUCCESS)
+        return 0;
+    int n = 0;
+    for (io_object_t dev; (dev = IOIteratorNext(it)) != IO_OBJECT_NULL;
+         IOObjectRelease(dev))
+        ++n;
+    IOObjectRelease(it);
+    return n;
 #else
     // Counted from the USB device tree rather than from /dev/disk/by-label,
     // deliberately. udev publishes ONE by-label symlink per label, so two
