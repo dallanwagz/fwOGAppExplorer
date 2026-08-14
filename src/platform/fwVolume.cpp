@@ -15,14 +15,19 @@
   #include <fcntl.h>
   #include <unistd.h>
   #if defined(__APPLE__)
-    // getmntinfo() -- macOS has no /proc/mounts -- and IOKit, which answers
-    // the USB-tree question /sys/bus/usb/devices answers on Linux.
+    #include <TargetConditionals.h>
+    // getmntinfo() -- macOS has no /proc/mounts -- and, on the Mac only,
+    // IOKit (the USB-tree question /sys/bus/usb/devices answers on Linux)
+    // plus DiskArbitration (the graceful pre-flash unmount). Neither
+    // framework is public API on iOS.
     #include <sys/param.h>
     #include <sys/ucred.h>
     #include <sys/mount.h>
-    #include <CoreFoundation/CoreFoundation.h>
-    #include <IOKit/IOKitLib.h>
-    #include <DiskArbitration/DiskArbitration.h>
+    #if TARGET_OS_OSX
+      #include <CoreFoundation/CoreFoundation.h>
+      #include <IOKit/IOKitLib.h>
+      #include <DiskArbitration/DiskArbitration.h>
+    #endif
   #endif
 #endif
 
@@ -327,7 +332,7 @@ struct ErrorModeGuard {
 };
 #endif
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) && TARGET_OS_OSX
 /// Cleanly unmount the volume through DiskArbitration, waiting for the verdict.
 ///
 /// Why this exists: the RP2040 bootrom detaches its device the instant the
@@ -683,7 +688,7 @@ std::vector<std::string> findRpiRp2Volumes()
 
 int countBootselDevices()
 {
-#if defined(_WIN32) || defined(__EMSCRIPTEN__)
+#if defined(_WIN32) || defined(__EMSCRIPTEN__) || (defined(__APPLE__) && !TARGET_OS_OSX)
     // Not asked here. On Windows the drive-letter enumeration above is already
     // the whole answer -- there is no equivalent "device present but nothing
     // mounted it" state to distinguish, because Windows mounts it itself -- and
@@ -691,7 +696,7 @@ int countBootselDevices()
     // unmountedBootselNotice() produce nothing, so no caller has to branch on
     // the platform to decide whether to ask.
     return 0;
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) && TARGET_OS_OSX
     // The same question the Linux branch below asks of /sys/bus/usb/devices,
     // asked of the IOKit registry: one IOUSBHostDevice node per physical
     // device, so two boards in BOOTSEL count as two -- the by-label collapse
@@ -767,7 +772,7 @@ std::expected<void, std::string> copyToVolume(const std::filesystem::path& src,
     const auto srcSize = std::filesystem::file_size(src, ec);
     if (ec) return std::unexpected("cannot read " + src.string() + ": " + ec.message());
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) && TARGET_OS_OSX
     // BEFORE the first byte is written: take the volume off Finder's books.
     // See remountNoBrowse() for why this ordering is the only one that
     // prevents the "Disk Not Ejected Properly" notification -- once any block
@@ -785,7 +790,7 @@ std::expected<void, std::string> copyToVolume(const std::filesystem::path& src,
                                std::filesystem::copy_options::overwrite_existing, ec);
     if (ec) return std::unexpected("copy to " + targetVolume + " failed: " + ec.message());
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) && TARGET_OS_OSX
     // Verify the copy while it is still readable from the page cache, then
     // unmount, which flushes every dirty page to the device. A clean unmount
     // subsumes the fsync below (unmount semantics: all dirty data reaches the

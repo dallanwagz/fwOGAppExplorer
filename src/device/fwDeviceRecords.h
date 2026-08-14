@@ -1,5 +1,6 @@
 #pragma once
 
+#include "device/fwFinderAvailable.h"
 #include "core/fwTypes.h"
 
 #include <functional>
@@ -41,7 +42,7 @@ std::optional<CpuPortRecord> usbDeviceToRecord(UsbKind kind,
 
 } // namespace fwog
 
-#ifndef __EMSCRIPTEN__
+#ifdef FWOG_HAVE_FWFINDER
 #include <fwfinder.hpp>
 
 namespace fwog {

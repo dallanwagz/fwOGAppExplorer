@@ -1,5 +1,6 @@
 #pragma once
 
+#include "device/fwFinderAvailable.h"
 #include <memory>
 #include <chrono>
 #include <cstdint>
@@ -11,12 +12,12 @@
 #include <string>
 #include <vector>
 
-#ifndef __EMSCRIPTEN__
+#ifdef FWOG_HAVE_FWFINDER
 #include <fwfinder.hpp>
 #endif
 
-#ifdef __EMSCRIPTEN__
-// fwfinder is not available on the web. Provide minimal stub types.
+#ifndef FWOG_HAVE_FWFINDER
+// fwfinder is not available here (web, iOS). Provide minimal stub types.
 namespace Fw {
     struct FreeWiliDevice {};
     using FreeWiliDevices = std::vector<FreeWiliDevice>;
@@ -123,7 +124,7 @@ private:
     virtual ~fwFinderManager();
     fwFinderManager operator=(const fwFinderManager&) = delete;
 
-#ifndef __EMSCRIPTEN__
+#ifdef FWOG_HAVE_FWFINDER
     std::mutex devicesResultMutex;
     std::expected<Fw::FreeWiliDevices, std::string> devicesResult;
 

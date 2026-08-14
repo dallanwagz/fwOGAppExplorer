@@ -1,5 +1,19 @@
 #include "ui/fwApp.h"
 
+// iOS is the one platform where SDL must own the real entry point: UIKit
+// requires UIApplicationMain to run the process, and SDL3's SDL_main.h -- on
+// platforms where SDL_MAIN_NEEDED is set, which excludes Windows, Linux and
+// macOS -- renames main below to SDL_main and supplies a real main() that
+// calls UIApplicationMain and then this function. The Windows comment further
+// down still holds: this include is scoped so it can never collide with the
+// hand-written WinMain there.
+#if defined(__APPLE__)
+  #include <TargetConditionals.h>
+  #if !TARGET_OS_OSX
+    #include <SDL3/SDL_main.h>
+  #endif
+#endif
+
 int main(int, char**)
 {
     fwog::App app;

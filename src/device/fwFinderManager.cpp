@@ -1,11 +1,14 @@
+#include "device/fwFinderAvailable.h"
 #include "device/fwFinderManager.h"
 #include <cassert>
 #include <chrono>
 
 namespace fwog {
 
-#ifdef __EMSCRIPTEN__
-// fwfinder is not available on the web. Provide no-op stubs.
+#ifndef FWOG_HAVE_FWFINDER
+// fwfinder is not available on the web or on iOS (its mac backend is IOKit,
+// which is not public API there, and there is no USB tree an iPad app may
+// walk anyway). Provide no-op stubs.
 fwFinderManager::~fwFinderManager() {}
 auto fwFinderManager::shutdown() noexcept -> void {}
 auto fwFinderManager::isRunning() noexcept -> bool { return false; }
@@ -234,6 +237,6 @@ auto fwFinderManager::run() noexcept -> void {
     _isRunning = false;
 }
 
-#endif // !__EMSCRIPTEN__
+#endif // real (non-web, non-iOS) implementation
 
 } // namespace fwog

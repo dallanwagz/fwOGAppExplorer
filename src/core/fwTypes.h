@@ -12,9 +12,15 @@ namespace fwog {
 // Platform capability
 // --------------------------------------------------------------------------
 
+#if defined(__APPLE__)
+  #include <TargetConditionals.h>
+#endif
+
 /// False where device detection and flashing cannot work at all (the web
-/// build). Guards UI affordances so nothing is offered that cannot happen.
-#if defined(__EMSCRIPTEN__)
+/// build, and -- for now -- the iPad build: Phase 1 of that port is catalog
+/// browsing only, with the folder-grant flash flow arriving in Phase 2).
+/// Guards UI affordances so nothing is offered that cannot happen.
+#if defined(__EMSCRIPTEN__) || (defined(__APPLE__) && !TARGET_OS_OSX)
 inline constexpr bool kDeviceSupportAvailable = false;
 #else
 inline constexpr bool kDeviceSupportAvailable = true;
@@ -32,9 +38,15 @@ inline constexpr bool kDeviceSupportAvailable = true;
 /// falling back to '?'.
 constexpr std::string_view platformLimitationNotice()
 {
+#if defined(__APPLE__) && !TARGET_OS_OSX
+    return "Flashing from this device is coming in a later build \xE2\x80\x94 for now, "
+           "browse the catalog here and flash from the desktop app. iPadOS cannot "
+           "reach serial ports, so features that need them stay on the desktop.";
+#else
     return "Device detection and flashing need the desktop app \xE2\x80\x94 a browser "
            "cannot reach USB mass storage or serial ports. Everything else on this "
            "page works.";
+#endif
 }
 
 // --------------------------------------------------------------------------
