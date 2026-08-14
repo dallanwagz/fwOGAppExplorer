@@ -29,7 +29,7 @@ namespace fwog {
 /// while the scanner thread also calls it is safe; it costs ~160 ms.
 ///
 /// Costs a real USB enumeration; call it when the answer matters, not per frame.
-/// Nullopt on the web build, where there is no fwfinder.
+/// Nullopt where there is no fwfinder (web, iOS -- see fwFinderAvailable.h).
 std::optional<CpuIdentity> identifyBoardNow(uint64_t uniqueID);
 
 /// `live` with the VERIFIED-PROBE volumes of `snapshot` carried over for any

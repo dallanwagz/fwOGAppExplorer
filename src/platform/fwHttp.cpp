@@ -4,6 +4,10 @@
 
 #include <cstring>
 
+#if defined(__APPLE__)
+  #include <TargetConditionals.h>   // TARGET_OS_OSX splits mac from iPad below
+#endif
+
 namespace fwog {
 namespace {
 
@@ -155,6 +159,28 @@ std::expected<std::string, std::string> httpGet(const std::string& url)
     return result;
 }
 
+} // namespace fwog
+
+#elif defined(__APPLE__) && !TARGET_OS_OSX
+
+// iOS/iPadOS: no public libcurl to dlopen, so the shared POSIX branch below
+// has nothing to open. The transport is NSURLSession, implemented in
+// fwHttpNSURL.mm -- which applies the same redirect policy
+// (mayRedirectToPlainHttp, 10-hop cap) the libcurl branch sets via
+// CURLOPT_REDIR_PROTOCOLS and CURLOPT_MAXREDIRS.
+namespace fwog {
+namespace detail {
+std::expected<std::string, std::string> nsurlHttpGet(const std::string& url);
+} // namespace detail
+
+bool httpAvailable() { return true; }   // NSURLSession ships with the OS
+
+std::expected<std::string, std::string> httpGet(const std::string& url)
+{
+    if (auto bad = checkUrl(url); !bad.has_value())
+        return std::unexpected(bad.error());
+    return detail::nsurlHttpGet(url);
+}
 } // namespace fwog
 
 #else   // Linux and other POSIX

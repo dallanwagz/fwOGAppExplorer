@@ -43,6 +43,18 @@
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
     },
     {
+      "name": "ios-release",
+      "displayName": "iOS Release (Xcode)",
+      "generator": "Xcode",
+      "binaryDir": "build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_SYSTEM_NAME": "iOS",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "17.0",
+        "FWOG_IOS_DEV_TEAM": "TLYZS5M3LM"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+    },
+    {
       "name": "wasm-release",
       "displayName": "Emscripten Release (UNVERIFIED -- never compiled)",
       "generator": "Ninja",
@@ -59,6 +71,8 @@
     { "name": "linux-gcc-release","configurePreset": "linux-gcc-release" },
     { "name": "mac-clang-debug",  "configurePreset": "mac-clang-debug" },
     { "name": "mac-clang-release","configurePreset": "mac-clang-release" },
+    { "name": "ios-release",      "configurePreset": "ios-release",
+      "configuration": "Release" },
     { "name": "wasm-release",     "configurePreset": "wasm-release" }
   ],
   "testPresets": [

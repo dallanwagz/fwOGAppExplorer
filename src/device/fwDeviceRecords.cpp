@@ -1,10 +1,14 @@
+#include "device/fwFinderAvailable.h"
 #include "device/fwDeviceRecords.h"
 
 #include <array>
 #include <fstream>
 #include <string_view>
 
-#if defined(__APPLE__)
+// Only where fwfinder itself exists: the IOKit lookup below serves
+// productStringOf(), which is fwfinder-facing code -- and IOKit is not
+// public API on iOS anyway.
+#if defined(__APPLE__) && defined(FWOG_HAVE_FWFINDER)
   #include <CoreFoundation/CoreFoundation.h>
   #include <IOKit/IOKitLib.h>
 #endif
@@ -77,7 +81,7 @@ std::optional<CpuPortRecord> usbDeviceToRecord(UsbKind kind,
 
 } // namespace fwog
 
-#ifndef __EMSCRIPTEN__
+#ifdef FWOG_HAVE_FWFINDER
 namespace fwog {
 
 UsbKind fromFwfinder(Fw::USBDeviceType t)

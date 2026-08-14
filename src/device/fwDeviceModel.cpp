@@ -1,8 +1,9 @@
+#include "device/fwFinderAvailable.h"
 #include "device/fwDeviceModel.h"
 
 #include "device/fwFinderManager.h"
 
-#ifndef __EMSCRIPTEN__
+#ifdef FWOG_HAVE_FWFINDER
 #include "device/fwDeviceRecords.h"
 #include "device/fwCpuIdentify.h"
 #endif
@@ -95,7 +96,7 @@ std::expected<std::vector<DeviceView>, std::string> defaultScan()
     if (!result) return std::unexpected(result.error());
 
     std::vector<DeviceView> next;
-#ifndef __EMSCRIPTEN__
+#ifdef FWOG_HAVE_FWFINDER
     next.reserve(result->size());
     for (const auto& device : *result) {
         DeviceView view;

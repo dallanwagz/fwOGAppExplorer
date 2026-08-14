@@ -14,6 +14,7 @@
   #include <unistd.h>
   #if defined(__APPLE__)
     #include <mach-o/dyld.h>   // _NSGetExecutablePath: no /proc on macOS
+    #include <TargetConditionals.h>
   #endif
 #endif
 
@@ -427,6 +428,18 @@ std::filesystem::path tempDir()
 
 std::filesystem::path catalogDir()
 {
+#if defined(__APPLE__) && !TARGET_OS_OSX
+    // iOS: the bundle is sealed and read-only, so "beside the executable" is
+    // nowhere a user could put a file. The sandbox's Documents folder is the
+    // platform's version of the same promise -- UIFileSharingEnabled and
+    // LSSupportsOpeningDocumentsInPlace (Info.plist) surface it in the Files
+    // app, so "drop a UF2 in the folder" stays true, spelled "in Files".
+    // $HOME is the sandbox container and always set for an iOS app; falling
+    // through to the bundle path on a machine where it somehow is not gives
+    // an existing, listable (if unwritable) directory rather than "".
+    if (const char* home = std::getenv("HOME"))
+        return std::filesystem::path(home) / "Documents";
+#endif
     return exeDir() / "catalog";
 }
 

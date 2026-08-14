@@ -2,8 +2,9 @@
 
 #include "device/fwCpuIdentify.h"
 #include "device/fwDeviceRecords.h"
+#include "device/fwFinderAvailable.h"
 
-#ifndef __EMSCRIPTEN__
+#ifdef FWOG_HAVE_FWFINDER
 #include <fwfinder.hpp>
 #endif
 
@@ -11,7 +12,7 @@ namespace fwog {
 
 std::optional<CpuIdentity> identifyBoardNow(uint64_t uniqueID)
 {
-#ifdef __EMSCRIPTEN__
+#ifndef FWOG_HAVE_FWFINDER
     (void)uniqueID;
     return std::nullopt;
 #else

@@ -25,11 +25,16 @@
   #include <chrono>
   #include <thread>
   #if defined(__APPLE__)
-    // IOKit's serial registry: the macOS answer to /sys/class/tty, and the
-    // only place a /dev/cu.* node's USB vendor/product identity can be read.
-    #include <CoreFoundation/CoreFoundation.h>
-    #include <IOKit/IOKitLib.h>
-    #include <IOKit/serial/IOSerialKeys.h>
+    #include <TargetConditionals.h>
+    #if TARGET_OS_OSX
+      // IOKit's serial registry: the macOS answer to /sys/class/tty, and the
+      // only place a /dev/cu.* node's USB vendor/product identity can be read.
+      // macOS only -- IOKit is not public API on iOS, where there are no
+      // serial ports to enumerate anyway.
+      #include <CoreFoundation/CoreFoundation.h>
+      #include <IOKit/IOKitLib.h>
+      #include <IOKit/serial/IOSerialKeys.h>
+    #endif
   #endif
 #endif
 
@@ -327,6 +332,13 @@ std::optional<std::string> readSerialLine(const std::string& port, int timeoutMs
 std::vector<SerialPortInfo> listSerialPortInfo() { return {}; }
 
 std::optional<std::string> readSerialLine(const std::string&, int) { return std::nullopt; }
+
+#elif defined(__APPLE__) && !TARGET_OS_OSX
+
+// iPadOS: no serial API exists at all -- same honest answers as the web
+// build, for the same reason. kDeviceSupportAvailable is false there and
+// every affordance that would ask is already disabled.
+std::vector<SerialPortInfo> listSerialPortInfo() { return {}; }
 
 #elif defined(__APPLE__)
 
