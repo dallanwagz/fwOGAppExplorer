@@ -53,6 +53,10 @@ UF2s; the App Explorer tab picks up anything dropped in there.
 development packages, it has one shared-library dependency Windows does not, and
 serial-port permissions usually need a one-time setup step.
 
+**macOS** works and has flashed a real board, also from source — see
+[macOS](#macos). It needs nothing beyond CMake and Ninja, and it has the
+smoothest permission story of the three platforms.
+
 ## What it does
 
 | Tab | Purpose |
@@ -146,6 +150,7 @@ with the MSVC environment loaded (the "x64 Native Tools Command Prompt") — the
 preset fails loudly rather than silently falling back to a GCC on `PATH`.
 
 Presets: `win-msvc-debug`, `win-msvc-release`, `linux-gcc-release`,
+`mac-clang-debug`, `mac-clang-release`,
 `wasm-release`.
 
 `linux-gcc-release` is a real target and has its own section below — it builds,
@@ -447,6 +452,90 @@ install**; and the `LegacyDirect` restore. Timings and serial numbers are in
   from the protocol and from SDL's source, and has not been watched happening.
 - **Any other machine.** Everything here is one build on one distribution. The
   glibc floor above is the honest way to reason about the rest.
+
+## macOS
+
+macOS builds, tests green, runs, and **has flashed a real board** — including
+the one path Linux never exercised. Verified against an attached FreeWili 1-OG
+(serial FW4300): device detection and CPU identification by hub position;
+product strings read from the IO registry; and the **App Explorer `OgApp`
+flash end to end** — the 1200-baud touch, `RPI-RP2` volume discovery, the
+copy with `F_FULLFSYNC`, MAIN provisioned, and the display bootloader carrying
+the embedded DISPLAY image across the inter-CPU link, confirmed by both CPUs
+re-enumerating with the new app's product strings. Also verified: the full
+build (`mac-clang-release`, Apple clang, arm64), the complete test suite
+(553 cases / 2167 assertions), and the signed+notarized `.app`.
+
+Not verified on macOS: the display-bootloader install and `LegacyDirect`
+restore flows (the attached board already had its bootloader), the CPU-prober
+recovery flow, and two boards at once. See
+[`docs/hardware-verification.md`](docs/hardware-verification.md) for the
+per-flow ledger.
+
+### Building on macOS
+
+Requires Xcode command line tools plus CMake and Ninja (`brew install cmake
+ninja`). Then:
+
+```sh
+cmake --preset mac-clang-release
+cmake --build --preset mac-clang-release
+ctest  --preset mac-clang-release
+```
+
+Output lands in `build/mac-clang-release/`. `freewili-finder` has a native IOKit
+backend, so unlike Linux there is no `libudev` equivalent to install — the USB
+enumeration, serial identity reads (`fwSerialPorts.cpp`) and BOOTSEL device
+counting (`fwVolume.cpp`) all go through IOKit and CoreFoundation, which ship
+with the OS.
+
+### What macOS gets for free that Linux does not
+
+- **No serial-port permission setup.** `/dev/cu.*` nodes are world-writable by
+  default; there is no `dialout`/`uucp` group to join and no udev rule to write.
+- **The `RPI-RP2` volume auto-mounts**, under `/Volumes/RPI-RP2` (a second board
+  mounts at `/Volumes/RPI-RP2 1` — the space is handled). No `udisksctl` step.
+- **libcurl ships with the OS** (`/usr/lib/libcurl.4.dylib`), so the remote
+  catalog works without installing anything. It is still `dlopen`ed, never
+  linked, same as Linux.
+- **A leaner dependency truth.** `otool -L` reports only OS-provided libraries
+  and frameworks — there is no third-party shared-library dependency at all,
+  which makes the "one executable" claim closer to the Windows truth than the
+  Linux one.
+
+### Where things land
+
+Settings and the catalog cache go to `~/Library/Application Support/
+fwOGAppExplorer/` — the platform's convention, where Linux uses
+`~/.local/share`. An absolute `$XDG_DATA_HOME`, if you set one, still wins on
+both. The `catalog/` folder is looked for beside the executable, same as every
+platform.
+
+### Signing and distribution
+
+The build output is a plain executable, ad-hoc signed by the linker as arm64
+requires — fine for local use. For distribution, wrap it in the minimal `.app`
+bundle (a bare Mach-O double-clicked in Finder drags a Terminal window up
+behind it, and `stapler` refuses to staple anything that is not a bundle):
+
+```sh
+packaging/make_mac_app.sh                 # bundle + Developer ID signature
+ditto -c -k --keepParent build/mac-clang-release/fwOGAppExplorer.app /tmp/fwog.zip
+xcrun notarytool submit /tmp/fwog.zip --keychain-profile <profile> --wait
+xcrun stapler staple build/mac-clang-release/fwOGAppExplorer.app
+```
+
+This flow has been run end to end: the bundle notarizes (`status: Accepted`),
+staples, and `spctl --assess` answers `accepted, source=Notarized Developer
+ID`. It needs a **Developer ID Application** certificate — an Apple Development
+certificate signs a binary that runs locally but will not pass Gatekeeper on
+another machine — and a `notarytool store-credentials` profile.
+
+One consequence of the bundle worth knowing: `catalog/` sits beside the
+executable on every platform, and inside a bundle "beside the executable"
+means `fwOGAppExplorer.app/Contents/MacOS/catalog/`. The "Open catalog folder"
+button opens the right place; finding it by hand takes Finder's "Show Package
+Contents".
 
 ## Hardware verification status
 

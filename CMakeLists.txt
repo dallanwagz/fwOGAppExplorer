@@ -292,6 +292,17 @@ if(WIN32)
     # registry key. See src/platform/fwSerialPorts.h.
     target_link_libraries(fwog_platform PRIVATE setupapi)
 endif()
+if(APPLE)
+    # IOKit is the macOS answer to what sysfs answers on Linux: which USB
+    # device a /dev/cu.* port belongs to (fwSerialPorts.cpp) and how many
+    # RP2040s are sitting in BOOTSEL (fwVolume.cpp). fwfinder links the same
+    # pair for the same reason.
+    target_link_libraries(fwog_platform PRIVATE
+        "-framework IOKit" "-framework CoreFoundation"
+        # DiskArbitration: the clean unmount after a flash that keeps macOS
+        # from posting "Disk Not Ejected Properly" when the bootrom reboots.
+        "-framework DiskArbitration")
+endif()
 
 # ---------------------------------------------------------------------------
 # fwog_flash -- binds the flash engine (fwog_core) to production I/O

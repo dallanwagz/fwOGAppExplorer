@@ -287,7 +287,16 @@ const Curl& curl()
     // belong HERE and not at each call site -- done once, they cannot race.
     static const Curl c = [] {
         Curl x;
+#if defined(__APPLE__)
+        // /usr/lib/libcurl.4.dylib ships with macOS itself (dyld shared cache;
+        // no file on disk since Big Sur, but dlopen resolves it regardless), so
+        // unlike Linux the "libcurl absent" arm should be unreachable in
+        // practice. The fallback spelling covers a Homebrew-only environment
+        // where someone has pointed DYLD_LIBRARY_PATH at an unversioned lib.
+        for (const char* name : { "libcurl.4.dylib", "libcurl.dylib" }) {
+#else
         for (const char* name : { "libcurl.so.4", "libcurl.so", "libcurl.so.3" }) {
+#endif
             x.lib = dlopen(name, RTLD_LAZY | RTLD_LOCAL);
             if (x.lib) break;
         }
