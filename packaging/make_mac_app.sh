@@ -43,7 +43,37 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$build/fwOGAppExplorer" "$app/Contents/MacOS/"
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/fwOGAppExplorer.icns"
 
-cat > "$app/Contents/Info.plist" <<'PLIST'
+# catalog/ lives beside the executable on every platform, which inside a
+# bundle means Contents/MacOS/catalog -- but codesign refuses data files in
+# MacOS/ (anything there is presumed nested code). So the real directory sits
+# in Resources/, sealed as resources, and a symlink at the path the app
+# actually reads keeps catalogDir() working unchanged. Drop sample .uf2s into
+# Contents/Resources/catalog BEFORE signing.
+#
+# Not empty: the release catalog/ is defined by "a note explaining itself"
+# (README, Download), and the bundle's must say the same thing for the same
+# reason -- an empty folder reads as a packaging mistake, a note does not.
+# The wording is the README's own.
+mkdir -p "$app/Contents/Resources/catalog"
+ln -s ../Resources/catalog "$app/Contents/MacOS/catalog"
+cat > "$app/Contents/Resources/catalog/README.txt" <<'NOTE'
+This folder holds nothing but this note, on purpose: the app fetches the
+published FreeWili catalog on first launch, so the apps are there without
+anything being bundled. Drop a .uf2 into this folder and the App Explorer
+tab lists it alongside them.
+NOTE
+
+# CFBundleShortVersionString wants semver, and the repo's one semver is the
+# project() VERSION in CMakeLists.txt -- read it from there rather than
+# keeping a copy that drifts. (FWOG_DISPLAY_VERSION is the title bar's "v2",
+# which answers a different question; see the comment beside it.)
+version=$(sed -n 's/^project(.* VERSION \([0-9][0-9.]*\).*/\1/p' "$repo/CMakeLists.txt")
+[ -n "$version" ] || {
+    echo "could not read the project() VERSION out of CMakeLists.txt" >&2
+    exit 1
+}
+
+cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -53,7 +83,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key>      <string>fwOGAppExplorer</string>
     <key>CFBundleIconFile</key>        <string>fwOGAppExplorer</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
-    <key>CFBundleShortVersionString</key> <string>1.0.0</string>
+    <key>CFBundleShortVersionString</key> <string>${version}</string>
     <key>LSMinimumSystemVersion</key>  <string>12.0</string>
     <key>NSHighResolutionCapable</key> <true/>
 </dict>
