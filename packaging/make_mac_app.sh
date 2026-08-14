@@ -43,6 +43,15 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$build/fwOGAppExplorer" "$app/Contents/MacOS/"
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/fwOGAppExplorer.icns"
 
+# catalog/ lives beside the executable on every platform, which inside a
+# bundle means Contents/MacOS/catalog -- but codesign refuses data files in
+# MacOS/ (anything there is presumed nested code). So the real directory sits
+# in Resources/, sealed as resources, and a symlink at the path the app
+# actually reads keeps catalogDir() working unchanged. Drop sample .uf2s into
+# Contents/Resources/catalog BEFORE signing.
+mkdir -p "$app/Contents/Resources/catalog"
+ln -s ../Resources/catalog "$app/Contents/MacOS/catalog"
+
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
