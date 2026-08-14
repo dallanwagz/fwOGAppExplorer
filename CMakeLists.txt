@@ -298,7 +298,10 @@ if(APPLE)
     # RP2040s are sitting in BOOTSEL (fwVolume.cpp). fwfinder links the same
     # pair for the same reason.
     target_link_libraries(fwog_platform PRIVATE
-        "-framework IOKit" "-framework CoreFoundation")
+        "-framework IOKit" "-framework CoreFoundation"
+        # DiskArbitration: the clean unmount after a flash that keeps macOS
+        # from posting "Disk Not Ejected Properly" when the bootrom reboots.
+        "-framework DiskArbitration")
 endif()
 
 # ---------------------------------------------------------------------------

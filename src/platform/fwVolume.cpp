@@ -22,6 +22,7 @@
     #include <sys/mount.h>
     #include <CoreFoundation/CoreFoundation.h>
     #include <IOKit/IOKitLib.h>
+    #include <DiskArbitration/DiskArbitration.h>
   #endif
 #endif
 
@@ -326,6 +327,178 @@ struct ErrorModeGuard {
 };
 #endif
 
+#if defined(__APPLE__)
+/// Cleanly unmount the volume through DiskArbitration, waiting for the verdict.
+///
+/// Why this exists: the RP2040 bootrom detaches its device the instant the
+/// last UF2 block arrives, and a volume that vanishes while mounted makes
+/// macOS post "Disk Not Ejected Properly" at the user -- on every single
+/// flash, for a disappearance that is the SUCCESS signal. Unmounting first
+/// fixes both halves at once: unmount(2) semantics flush every dirty page to
+/// the device before detaching (so this replaces flushToDevice()'s
+/// F_FULLFSYNC as the durability step, it does not skip it), and by the time
+/// the bootrom reboots the system has already let go of the volume, so there
+/// is nothing improper to complain about.
+///
+/// DiskArbitration rather than unmount(2) because the syscall needs root for
+/// a diskarbitrationd-owned mount; DADiskUnmount is how an ordinary console
+/// user ejects a USB drive, no privilege required.
+///
+/// false means "could not unmount" -- volume already gone (the bootrom won
+/// the race; the notice already fired and nothing here can recall it), or
+/// something holds the volume open (Spotlight indexing it). The caller falls
+/// back to the fsync path, which was the whole behaviour before this
+/// function existed; the flash outcome is identical either way, only the
+/// notification differs.
+namespace da {
+
+struct Result { bool done = false; bool ok = false; };
+
+void callback(DADiskRef, DADissenterRef dissenter, void* ctx)
+{
+    auto* r = static_cast<Result*>(ctx);
+    r->ok   = (dissenter == nullptr);
+    r->done = true;
+    CFRunLoopStop(CFRunLoopGetCurrent());
+}
+
+/// Run one DiskArbitration request against the volume at `mountPoint` and
+/// wait for its verdict. The deadline bounds the writeback a request can
+/// imply. Generous on purpose: FreeWiliDisplayV67 is 16 MB and a FAT volume
+/// over full-speed USB moves ~1 MB/s, so a tight budget would turn the
+/// largest legitimate image into a spurious failure; the deadline exists only
+/// so a wedged diskarbitrationd cannot park the flash worker forever.
+template <typename Fn>
+bool request(const std::string& mountPoint, Fn&& start)
+{
+    DASessionRef session = DASessionCreate(kCFAllocatorDefault);
+    if (!session) return false;
+
+    bool ok = false;
+    CFURLRef url = CFURLCreateFromFileSystemRepresentation(
+        kCFAllocatorDefault, reinterpret_cast<const UInt8*>(mountPoint.c_str()),
+        static_cast<CFIndex>(mountPoint.size()), true);
+    DADiskRef disk =
+        url ? DADiskCreateFromVolumePath(kCFAllocatorDefault, session, url) : nullptr;
+    if (disk) {
+        DASessionScheduleWithRunLoop(session, CFRunLoopGetCurrent(),
+                                     kCFRunLoopDefaultMode);
+        Result result;
+        start(disk, &result);
+        const CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 120.0;
+        while (!result.done && CFAbsoluteTimeGetCurrent() < deadline)
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1.0, true);
+        ok = result.done && result.ok;
+        DASessionUnscheduleFromRunLoop(session, CFRunLoopGetCurrent(),
+                                       kCFRunLoopDefaultMode);
+        CFRelease(disk);
+    }
+    if (url) CFRelease(url);
+    CFRelease(session);
+    return ok;
+}
+
+} // namespace da
+
+bool unmountVolumeGracefully(const std::string& mountPoint)
+{
+    return da::request(mountPoint, [](DADiskRef disk, da::Result* r) {
+        DADiskUnmount(disk, kDADiskUnmountOptionDefault, da::callback, r);
+    });
+}
+
+/// Remount the volume with `nobrowse`, so Finder never learns it exists.
+///
+/// This is the half that actually prevents the "Disk Not Ejected Properly"
+/// notification. The unmount-after-copy above cannot: the unmount's own
+/// writeback is what delivers the final UF2 block, and the bootrom reboots
+/// the instant it has it -- mid-unmount, volume still mounted, notification
+/// posted. MEASURED, on the first board flashed from a Mac: the graceful
+/// unmount was in place and the notification appeared anyway. No ordering of
+/// flush and unmount wins that race, because the flush IS the trigger.
+///
+/// What does win it: make the volume one Finder never tracks. diskarbitrationd
+/// posts the notification for browsable volumes; a `nobrowse` mount vanishing
+/// is nobody's business. So: cleanly unmount the auto-mounted volume BEFORE
+/// any write -- nothing is dirty yet, so this is instant and genuinely clean
+/// -- and remount it nobrowse. The copy then proceeds against the remounted
+/// volume and the reboot takes down a volume macOS was never showing anyone.
+///
+/// The disk is keyed by BSD name, captured from statfs BEFORE the unmount: a
+/// volume-path DADiskRef goes stale the moment the volume unmounts, while the
+/// BSD device persists until the USB device itself detaches.
+///
+/// Returns the (possibly identical) mount point of the nobrowse mount, or
+/// nullopt for "leave things as they are". On a failed remount it tries to
+/// put the ordinary mount back rather than leave the board's volume mounted
+/// nowhere -- the flash this call serves still needs SOMETHING to copy into,
+/// and so does the user's next attempt.
+std::optional<std::string> remountNoBrowse(const std::string& mountPoint)
+{
+    struct statfs sfs = {};
+    if (::statfs(mountPoint.c_str(), &sfs) != 0) return std::nullopt;
+    constexpr std::string_view kDev = "/dev/";
+    std::string bsd = sfs.f_mntfromname;
+    if (bsd.rfind(kDev, 0) == 0) bsd.erase(0, kDev.size());
+    if (bsd.empty()) return std::nullopt;
+
+    DASessionRef session = DASessionCreate(kCFAllocatorDefault);
+    if (!session) return std::nullopt;
+    DADiskRef disk = DADiskCreateFromBSDName(kCFAllocatorDefault, session, bsd.c_str());
+    std::optional<std::string> out;
+    if (disk) {
+        DASessionScheduleWithRunLoop(session, CFRunLoopGetCurrent(),
+                                     kCFRunLoopDefaultMode);
+        const auto await = [](da::Result& r) {
+            const CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 120.0;
+            while (!r.done && CFAbsoluteTimeGetCurrent() < deadline)
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1.0, true);
+            return r.done && r.ok;
+        };
+
+        da::Result unmounted;
+        DADiskUnmount(disk, kDADiskUnmountOptionDefault, da::callback, &unmounted);
+        if (await(unmounted)) {
+            // NULL path: diskarbitrationd picks the mount point, exactly as it
+            // did for the browsable mount. The argv form is the only way to
+            // pass a mount OPTION (nobrowse is not a DADiskMountOptions bit).
+            CFStringRef args[] = { CFSTR("nobrowse"), nullptr };
+            da::Result mounted;
+            DADiskMountWithArguments(disk, nullptr, kDADiskMountOptionDefault,
+                                     da::callback, &mounted, args);
+            if (await(mounted)) {
+                // Where did it land? Asked of the disk itself rather than
+                // assumed unchanged, so a diskarbitrationd that uniquifies the
+                // path cannot silently break the copy that follows.
+                if (CFDictionaryRef desc = DADiskCopyDescription(disk)) {
+                    auto vol = static_cast<CFURLRef>(CFDictionaryGetValue(
+                        desc, kDADiskDescriptionVolumePathKey));
+                    char buf[MAXPATHLEN] = {};
+                    if (vol && CFURLGetFileSystemRepresentation(
+                                   vol, true, reinterpret_cast<UInt8*>(buf),
+                                   sizeof(buf)))
+                        out = std::string(buf);
+                    CFRelease(desc);
+                }
+            } else {
+                // Do not strand the volume unmounted: put the ordinary mount
+                // back, best-effort. If this fails too the board re-presents
+                // its drive on the next BOOTSEL entry anyway.
+                da::Result remounted;
+                DADiskMount(disk, nullptr, kDADiskMountOptionDefault, da::callback,
+                            &remounted);
+                await(remounted);
+            }
+        }
+        DASessionUnscheduleFromRunLoop(session, CFRunLoopGetCurrent(),
+                                       kCFRunLoopDefaultMode);
+        CFRelease(disk);
+    }
+    CFRelease(session);
+    return out;
+}
+#endif
+
 #if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 /// fsync `file`, then the directory holding it, so both the data and the
 /// directory entry are on the device before the caller is told anything.
@@ -594,10 +767,44 @@ std::expected<void, std::string> copyToVolume(const std::filesystem::path& src,
     const auto srcSize = std::filesystem::file_size(src, ec);
     if (ec) return std::unexpected("cannot read " + src.string() + ": " + ec.message());
 
-    const auto dst = std::filesystem::path(volume) / src.filename();
+#if defined(__APPLE__)
+    // BEFORE the first byte is written: take the volume off Finder's books.
+    // See remountNoBrowse() for why this ordering is the only one that
+    // prevents the "Disk Not Ejected Properly" notification -- once any block
+    // of the image is in flight, no unmount can beat the bootrom's reboot to
+    // the punch. On any failure the copy proceeds against the original,
+    // browsable mount; the cost is the notification, never the flash.
+    std::string targetVolume = volume;
+    if (auto nb = remountNoBrowse(volume)) targetVolume = *nb;
+#else
+    const std::string& targetVolume = volume;
+#endif
+
+    const auto dst = std::filesystem::path(targetVolume) / src.filename();
     std::filesystem::copy_file(src, dst,
                                std::filesystem::copy_options::overwrite_existing, ec);
-    if (ec) return std::unexpected("copy to " + volume + " failed: " + ec.message());
+    if (ec) return std::unexpected("copy to " + targetVolume + " failed: " + ec.message());
+
+#if defined(__APPLE__)
+    // Verify the copy while it is still readable from the page cache, then
+    // unmount, which flushes every dirty page to the device. A clean unmount
+    // subsumes the fsync below (unmount semantics: all dirty data reaches the
+    // device or the unmount errors), so success here is the same durability
+    // guarantee by a different call. The bootrom usually wins this unmount --
+    // the flush delivers its last block and it reboots mid-detach -- which is
+    // exactly why the nobrowse remount above, not this call, is what keeps
+    // the notification away. Any failure other than a size mismatch falls
+    // through to the fsync path, whose rules understand a vanished
+    // destination.
+    {
+        std::error_code copiedEc;
+        const auto copiedSize = std::filesystem::file_size(dst, copiedEc);
+        if (!copiedEc && copiedSize != srcSize)
+            return std::unexpected(
+                "the copied image is the wrong size; the write did not complete");
+        if (!copiedEc && unmountVolumeGracefully(targetVolume)) return {};
+    }
+#endif
 
 #if !defined(_WIN32)
     // copy_file() returning does NOT mean the image is on the board. MEASURED,
