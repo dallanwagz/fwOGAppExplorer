@@ -102,6 +102,23 @@ std::expected<std::string, std::string> normalizeRemoteCatalogUrl(std::string_vi
     return std::string(trimmed);
 }
 
+std::string_view defaultRemoteCatalogUrl()
+{
+    // Served as a static file from the documentation site. The path is
+    // deliberately its own directory rather than a route the docs themselves
+    // could grow into: the JSON and the .uf2 files beside it are published as
+    // a unit by tools/build_catalog.py, and a docs page that later wanted the
+    // same path would silently shadow them.
+    return "https://docs.freewili.com/og-apps/apps.json";
+}
+
+std::string remoteCatalogUrlAtStartup(std::string_view stored, bool defaultSeeded)
+{
+    if (!stored.empty())  return std::string(stored);
+    if (defaultSeeded)    return std::string{};   // cleared on purpose; leave it off
+    return std::string(defaultRemoteCatalogUrl());
+}
+
 std::string formatSettingsLine(std::string_view key, std::string_view value)
 {
     std::string line;

@@ -1,0 +1,49 @@
+{
+  "_comment": [
+    "Input to tools/build_catalog.py, which publishes the remote catalog to",
+    "docs.freewili.com. This file carries ONLY what a UF2 cannot know about",
+    "itself: which apps to publish, and the storefront metadata around them.",
+    "",
+    "name, tagline, description, version and updated are all read out of the",
+    "image's own fwog_uf2_info_t records unless overridden here, so rebuilding",
+    "an app and re-running the tool republishes what the new bytes actually",
+    "say. Override `name` where the record holds a C identifier and the",
+    "storefront wants prose; leave the rest alone so it cannot drift.",
+    "",
+    "`source` is the <app>_main.uf2 the OG build produces. Relative paths",
+    "resolve against this repository's root, absolute paths are taken as given",
+    "-- the app repositories are separate checkouts and are not vendored here."
+  ],
+
+  "baseUrl": "https://docs.freewili.com/og-apps/",
+
+  "apps": [
+    {
+      "slug": "ogvegas",
+      "source": "ogvegas_main.uf2",
+      "name": "OG Vegas",
+      "category": "Demos",
+      "author": "Intrepid Control Systems",
+      "github": "https://github.com/freewili/wiliOGbsp",
+      "tags": ["demo", "audio", "leds", "display"]
+    },
+    {
+      "slug": "wilidoro",
+      "source": "wilidoro_main.uf2",
+      "name": "WiLiDoro",
+      "category": "Apps",
+      "author": "Intrepid Control Systems",
+      "github": "https://github.com/freewili/wiliOGbsp",
+      "tags": ["timer", "pomodoro", "productivity", "subghz"]
+    },
+    {
+      "slug": "orca-catalog",
+      "source": "C:/~prj/Dropbox/vibeProjects/fwOGOrcaCatalog/og-bsp/build/apps/orca_catalog/orca_catalog_main.uf2",
+      "name": "Orca Field Notes",
+      "category": "Apps",
+      "author": "Intrepid Control Systems",
+      "github": "https://github.com/freewili/freewili2-orca-field-notes",
+      "tags": ["reference", "audio", "qr", "nature"]
+    }
+  ]
+}

@@ -95,6 +95,49 @@ bool hasHttpScheme(std::string_view url);
 /// containing more of them survives the round trip intact.
 std::expected<std::string, std::string> normalizeRemoteCatalogUrl(std::string_view raw);
 
+/// The catalog this app ships pointed at: the published FreeWili OG app
+/// catalog on the documentation site.
+///
+/// A DEFAULT, not a hardcoded destination. It seeds the field on a first run
+/// so that a user who installs the app sees real apps without first being told
+/// an address to paste (the gap the Settings tab's control closed only halfway
+/// -- reachable, but still undiscoverable). Everything downstream treats it as
+/// exactly as trustworthy as a URL the user typed: it is fetched over https,
+/// it goes through normalizeRemoteCatalogUrl() like any other, and the Settings
+/// tab can overwrite or clear it.
+///
+/// Kept here rather than in fwApp.cpp so the seeding RULE below and the value
+/// it seeds are one unit, and so a test can assert the shipped default is a
+/// URL this app would have accepted from a user.
+std::string_view defaultRemoteCatalogUrl();
+
+/// The remote catalog URL a launch should start with.
+///
+/// `stored` is what settings.ini held for `remoteCatalogUrl` (already through
+/// normalizeRemoteCatalogUrl, so empty covers "the key was absent", "the value
+/// was empty" and "the value was rejected"). `defaultSeeded` is whether the
+/// file carried the `remoteCatalogDefaultSeeded` marker.
+///
+/// The marker exists to tell two states apart that `stored` alone cannot:
+///
+///   * NEVER CONFIGURED -- a fresh install, or an install upgraded from a build
+///     that shipped no default. Seed the default, so the app arrives useful.
+///   * DELIBERATELY CLEARED -- the user emptied the field and pressed Save.
+///     That is a choice, and re-seeding the default on the next launch would
+///     silently undo it, which is the one behaviour a "turn it off" control
+///     must never have.
+///
+/// Both look like an empty `remoteCatalogUrl=` line on disk. Only the marker,
+/// written from the first save onward, separates them -- which is also what
+/// makes this safe for the users who ALREADY have a settings.ini holding an
+/// empty URL from an earlier build: they have no marker, so they are treated as
+/// never-configured and get the default, rather than being permanently stuck
+/// with a remote catalog that never turns on.
+///
+/// A non-empty `stored` always wins, seeded or not: a URL in the file is a URL
+/// somebody chose.
+std::string remoteCatalogUrlAtStartup(std::string_view stored, bool defaultSeeded);
+
 /// One complete settings.ini line, trailing newline included, ready to stream
 /// straight out. The value is written verbatim: callers are responsible for
 /// having rejected anything containing a newline first (see

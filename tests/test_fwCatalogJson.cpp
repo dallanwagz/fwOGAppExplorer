@@ -183,3 +183,87 @@ TEST_CASE("a non-object entry in the apps array is skipped") {
     REQUIRE(r->size() == 1);
     CHECK((*r)[0].slug == "ok");
 }
+
+// ---------------------------------------------------------------------------
+// The contract between tools/build_catalog.py and this parser.
+//
+// The published catalog is GENERATED, so the two halves can drift silently:
+// nothing else in this build compiles, runs or reads the generator, and a
+// field it renames or a type it changes would first be noticed by a user whose
+// app store went blank. What follows is one entry copied verbatim out of a
+// real `python tools/build_catalog.py` run -- shape, key order, types and all
+// -- asserted to produce exactly the entry the app expects.
+//
+// If this test fails after a generator change, the generator changed the
+// contract. Fix whichever side is wrong; do not just update the fixture.
+// ---------------------------------------------------------------------------
+
+static constexpr const char* kGeneratedCatalog = R"({
+  "apps": [
+    {
+      "slug": "orca-catalog",
+      "name": "Orca Field Notes",
+      "tagline": "Orca Field Notes: 72 sourced stories, QR links, and natural-history audio",
+      "description": "Carries the Orca Field Notes display firmware for FreeWili OG. On the display: Orca Field Notes: 72 sourced stories, QR links, and natural-history audio. Built from 39be66b-dirty.",
+      "author": "Intrepid Control Systems",
+      "github": "https://github.com/freewili/freewili2-orca-field-notes",
+      "category": "Apps",
+      "tags": [
+        "reference",
+        "audio",
+        "qr",
+        "nature"
+      ],
+      "version": "001",
+      "updated": "2026-07-29",
+      "flashScheme": "OgApp",
+      "uf2": [
+        {
+          "cpu": "main",
+          "url": "https://docs.freewili.com/og-apps/uf2/orca-catalog_main.uf2",
+          "sha256": "2dd594d83f583a5f95d5d9847b683ff250b21c7527398ed3aaaab63e7231b861",
+          "size": 1146368
+        }
+      ]
+    }
+  ]
+})";
+
+TEST_CASE("a catalog written by tools/build_catalog.py parses into the entry it describes") {
+    auto r = parseCatalogJson(kGeneratedCatalog, CatalogSource::Remote);
+    REQUIRE(r.has_value());
+    REQUIRE(r->size() == 1);
+    const auto& e = (*r)[0];
+
+    CHECK(e.slug == "orca-catalog");
+    CHECK(e.name == "Orca Field Notes");
+    CHECK(e.category == "Apps");
+    CHECK(e.author == "Intrepid Control Systems");
+    CHECK(e.version == "001");
+    CHECK(e.updated == "2026-07-29");
+    REQUIRE(e.tags.size() == 4);
+    CHECK(e.tags[0] == "reference");
+
+    // The generator states flashScheme rather than leaving it out, so the app
+    // must NOT be treating this as an inferred default -- an inferred scheme is
+    // surfaced to the user as a caveat, and a caveat on a catalog we publish
+    // ourselves would be one we put there by omission.
+    CHECK(e.scheme == FlashScheme::OgApp);
+    CHECK(e.schemeInferred == false);
+    // OgApp with a single main asset: the display image rides inside it. An
+    // entry that reached the DISPLAY CPU is what the generator's
+    // no-MAIN-record refusal exists to make impossible.
+    REQUIRE(e.uf2.size() == 1);
+    CHECK(e.uf2[0].cpu == TargetCpu::Main);
+    CHECK(e.uf2[0].ref.url == "https://docs.freewili.com/og-apps/uf2/orca-catalog_main.uf2");
+    CHECK(e.uf2[0].ref.localPath.empty());
+    CHECK(e.uf2[0].ref.embeddedId.empty());
+    // The two fields that make a download verifiable. `size` must survive as a
+    // number, not a string: the parser only reads it when it is_number_unsigned,
+    // so a generator that quoted it would silently publish size 0.
+    CHECK(e.uf2[0].sha256 == "2dd594d83f583a5f95d5d9847b683ff250b21c7527398ed3aaaab63e7231b861");
+    CHECK(e.uf2[0].size == 1146368);
+    // Not default firmware: these are apps, and defaultFirmware entries are the
+    // bootloader/erase actions the Default Firmware tab owns.
+    CHECK(e.defaultFirmware == false);
+}

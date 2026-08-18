@@ -152,6 +152,59 @@ One caveat worth stating plainly: the record layout this app parses was
 offsets and the evidence). Every field is bounds-checked and a record that does
 not fit is rejected rather than read past.
 
+## The app catalog
+
+App Explorer merges three sources into one list:
+
+| source | where it comes from |
+|---|---|
+| **Embedded** | compiled into the executable — the display bootloader, the erase actions, the deprecated original firmware |
+| **Local** | any `.uf2` dropped in the `catalog/` folder beside the executable, plus an optional `catalog.json` describing them |
+| **Remote** | an `apps.json` fetched over HTTPS |
+
+The remote catalog ships pointed at the published FreeWili one:
+
+```
+https://docs.freewili.com/og-apps/apps.json
+```
+
+A fresh install fetches it at startup with no configuration; the Settings tab
+can point it somewhere else, or clear it to stop fetching. Clearing it sticks —
+the default is seeded once, not re-applied on every launch — and **Use the
+FreeWili catalog** puts it back.
+
+Only `https://` is accepted, and a redirect from `https://` down to `http://`
+is refused. This is not general caution: a catalog entry is authoritative over
+which of the board's two CPUs each image is written to, and a main-CPU image
+written to the DISPLAY CPU drives GPIO 29 against the PDM microphone's own
+output. Nothing downstream can catch a rewritten catalog — `sha256` is
+self-attested by the same document, and a UF2 header cannot distinguish a MAIN
+image from a DISPLAY one.
+
+A failed fetch is a status line and never a modal, and never clears entries the
+app already had: an offline launch shows the previous catalog from
+`apps-cache.json`.
+
+### Publishing to it
+
+`publish/` holds the authored input and `tools/build_catalog.py` builds the
+tree that gets uploaded:
+
+```powershell
+python tools/build_catalog.py     # -> publish/out/og-apps/{apps.json, uf2/*.uf2}
+```
+
+Almost nothing in the published `apps.json` is written by hand. Every OG main
+image carries `fwog_uf2_info_t` records (the FwOGapp Contract, above), so the
+tool reads each app's name, description, version and build identity straight
+out of the bytes it is publishing, then computes `sha256` and `size` from them.
+`publish/sources.json` carries only what an image cannot know about itself:
+which apps to publish, and their category, author, repository and tags.
+
+Copy `publish/out/og-apps/` into the documentation site's `static/` and deploy.
+Full procedure, including what the server has to get right, in
+[`publish/README.md`](publish/README.md).
+
 ## Firmware for the board itself
 
 The RP2040-side firmware — the display bootloader, the CPU prober this app
