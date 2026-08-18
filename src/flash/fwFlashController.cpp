@@ -1,6 +1,8 @@
 #include "flash/fwFlashController.h"
 
 #include "catalog/fwCatalogEmbedded.h"
+#include "device/fwBoardIdentify.h"
+#include "flash/fwFlashPrep.h"
 #include "platform/fwHttp.h"
 #include "platform/fwPaths.h"
 #include "platform/fwSerialTouch.h"
@@ -11,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <span>
 #include <utility>
 
@@ -78,10 +81,23 @@ stageFileProd(std::span<const uint8_t> bytes, const std::string& filename)
 
 } // namespace
 
-FlashIo makeProductionFlashIo(const CpuIdentity& identity)
+FlashIo makeProductionFlashIo(const CpuIdentity& identity, uint64_t uniqueID)
 {
     FlashIo io;
-    io.identify    = [identity] { return identity; };
+    if (uniqueID == 0) {
+        io.identify = [identity] { return identity; };
+    } else {
+        // Shared, not captured by value: FlashIo is copied around (the worker
+        // lambda takes its own copy), and every copy must see the same "last
+        // known" answer, or a copy that never got a fresh look would keep
+        // handing out the pre-flash snapshot.
+        auto last = std::make_shared<CpuIdentity>(identity);
+        io.identify = [last, snapshot = identity, uniqueID] {
+            if (auto live = identifyBoardNow(uniqueID))
+                *last = withProbeVolumesFrom(std::move(*live), snapshot);
+            return *last;
+        };
+    }
     io.findVolumes = findRpiRp2Volumes;
     io.touchPort   = touchPort1200;
     io.loadImage   = loadImageProd;
@@ -110,27 +126,23 @@ FlashIo makeProductionFlashIo(const CpuIdentity& identity)
 
 SelectionCheck selectionUnchanged(const std::optional<DeviceView>& current,
                                    uint64_t openedUniqueID,
-                                   const std::string& openedSerial)
+                                   const BoardFingerprint& opened)
 {
     if (!current.has_value()) return SelectionCheck::NothingSelected;
     if (current->uniqueID != openedUniqueID) return SelectionCheck::DifferentPort;
-    // Ordered before the equality test, not folded into it: two unidentified
-    // serials must never compare equal (that is the whole point of
-    // serialIsUnidentified()), and separating the two answers costs nothing
-    // in safety -- both refuse -- while letting the message say what is
-    // actually known. See the SelectionCheck enum's comment.
-    if (serialIsUnidentified(current->serial) || serialIsUnidentified(openedSerial))
-        return SelectionCheck::UnidentifiedSerial;
-    return current->serial == openedSerial ? SelectionCheck::Unchanged : SelectionCheck::DifferentBoard;
+    // Refuse on positive evidence only -- see the header comment, and
+    // BoardFingerprint (fwDeviceModel.h) for the rule and its reason.
+    return fingerprintsContradict(fingerprintOf(*current), opened) ? SelectionCheck::DifferentBoard
+                                                                    : SelectionCheck::Unchanged;
 }
 
 SelectionCheck selectionUnchangedFresh(const std::optional<DeviceView>& current,
                                         uint64_t openedUniqueID,
-                                        const std::string& openedSerial,
+                                        const BoardFingerprint& opened,
                                         std::optional<std::chrono::milliseconds> snapshotAge,
                                         std::chrono::milliseconds maxAge)
 {
-    const SelectionCheck base = selectionUnchanged(current, openedUniqueID, openedSerial);
+    const SelectionCheck base = selectionUnchanged(current, openedUniqueID, opened);
     // Only Unchanged is gated -- see this function's header comment for why a
     // refusal is passed through with its own specific wording instead.
     if (base != SelectionCheck::Unchanged) return base;
@@ -151,17 +163,6 @@ std::string selectionCheckMessage(SelectionCheck check)
         return "No device is selected any more. Close and reopen to flash the current selection.";
     case SelectionCheck::DifferentBoard:
         return "A different device now occupies this USB port than when this dialog opened. Close and reopen to flash the current selection.";
-    case SelectionCheck::UnidentifiedSerial:
-        // Deliberately NOT the DifferentBoard wording. This state is reached
-        // most often by ONE board part-way through re-enumeration, which
-        // briefly reports no serial at all; asserting "a different device now
-        // occupies this port" would state as fact something nobody knows and
-        // send the user looking for a board swap that never happened. What IS
-        // known is only that the board cannot be confirmed right now -- so say
-        // that, and say that waiting is what resolves it. It refuses just as
-        // hard either way: this is indistinguishable from a swap in progress,
-        // and is treated as one.
-        return "The board on this USB port is not reporting a serial number right now, so it cannot be confirmed as the same one this dialog opened on -- it may still be reconnecting. Wait for it to come back, or close and reopen to flash the current selection.";
     case SelectionCheck::DifferentPort:
         return "The selected device is no longer on the same USB port -- it may have moved or been unplugged. Close and reopen to flash the current selection.";
     case SelectionCheck::StaleSnapshot:
@@ -179,9 +180,11 @@ std::string selectionCheckMessage(SelectionCheck check)
 const char* flashPhaseLabel(FlashPhase phase)
 {
     switch (phase) {
+    case FlashPhase::Preparing:         return "preparing";
     case FlashPhase::StepStarted:       return "starting";
     case FlashPhase::Loading:           return "loading";
     case FlashPhase::Verifying:         return "verifying";
+    case FlashPhase::WaitingForCpu:     return "waiting for CPU";
     case FlashPhase::Touching:          return "touching";
     case FlashPhase::WaitingForVolume:  return "waiting for volume";
     case FlashPhase::Copying:           return "copying";
@@ -281,7 +284,8 @@ FlashController::~FlashController()
     if (m_worker.joinable()) m_worker.join();
 }
 
-void FlashController::begin(const CatalogEntry& entry, const CpuIdentity& identity)
+void FlashController::begin(const CatalogEntry& entry, const CpuIdentity& identity,
+                            uint64_t uniqueID)
 {
     if (m_state == FlashState::Running) return; // one flash at a time
 
@@ -293,6 +297,7 @@ void FlashController::begin(const CatalogEntry& entry, const CpuIdentity& identi
     if (m_worker.joinable()) m_worker.join();
 
     m_identity = identity;
+    m_uniqueID = uniqueID;
     // dropRedundantErases() applied HERE, at the one place a plan becomes the
     // thing that actually runs, against the SAME identity snapshot the engine
     // will use -- so the steps executed and the steps the dialog previewed
@@ -310,7 +315,7 @@ void FlashController::begin(const CatalogEntry& entry, const CpuIdentity& identi
     m_cancelRequested.store(false, std::memory_order_relaxed);
     m_state = FlashState::Running;
 
-    startWorker(std::string{}, 0);
+    startWorker(std::string{}, 0, /*prepare=*/true);
 }
 
 void FlashController::confirm(std::string typed, const CpuIdentity& identity)
@@ -336,12 +341,17 @@ void FlashController::confirm(std::string typed, const CpuIdentity& identity)
     const std::size_t startIndex = m_result.stepsCompleted;
     m_cancelRequested.store(false, std::memory_order_relaxed);
     m_state = FlashState::Running;
-    startWorker(std::move(typed), startIndex);
+    // No preparation on a resume: the DISPLAY was already dealt with (or
+    // deliberately not) before step 0, and steps before startIndex have run
+    // real I/O since. Re-quieting here could reboot a DISPLAY the plan just
+    // wrote.
+    startWorker(std::move(typed), startIndex, /*prepare=*/false);
 }
 
-void FlashController::startWorker(std::string typedConfirmation, std::size_t startIndex)
+void FlashController::startWorker(std::string typedConfirmation, std::size_t startIndex,
+                                  bool prepare)
 {
-    FlashIo io = makeProductionFlashIo(m_identity);
+    FlashIo io = makeProductionFlashIo(m_identity, m_uniqueID);
     // Overrides makeProductionFlashIo's plain sleep-and-never-cancel
     // waitTick with one bound to this controller's own flag.
     io.waitTick = [this](int intervalMs) {
@@ -350,9 +360,21 @@ void FlashController::startWorker(std::string typedConfirmation, std::size_t sta
     };
 
     m_worker = std::thread([this, io = std::move(io), plan = m_plan,
-                            typedConfirmation = std::move(typedConfirmation), startIndex]() mutable {
-        auto result = runFlashPlan(io, plan, typedConfirmation,
-            [this](const FlashProgress& p) { enqueueProgress(p); }, startIndex);
+                            typedConfirmation = std::move(typedConfirmation), startIndex,
+                            prepare]() mutable {
+        const ProgressFn progress = [this](const FlashProgress& p) { enqueueProgress(p); };
+        if (prepare) {
+            const PrepResult prep = quietDisplayBeforeMainWrite(io, plan, progress);
+            if (prep.outcome == PrepOutcome::Cancelled) {
+                FlashResult r;
+                r.outcome = FlashOutcome::Aborted;
+                r.message = "cancelled before anything was written.";
+                r.stepsCompleted = 0;
+                enqueueResult(r);
+                return;
+            }
+        }
+        auto result = runFlashPlan(io, plan, typedConfirmation, progress, startIndex);
         enqueueResult(result);
     });
 }

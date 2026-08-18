@@ -146,11 +146,11 @@ If, after that, one CPU enumerates and the other does not, that is a firmware pr
     {
         RecoveryAnchor::BoardSerialUnidentified,
         kBoardSerialUnidentifiedTitle,
-        R"TXT(This is different from either CPU's identification problem above, and it does not stop the MAIN or DISPLAY port from being found. The FreeWili OG's own identifying serial number is read from a separate FTDI USB-to-serial chip on the board, not from either RP2040's own serial port. If that chip's USB device entry is not found during a scan, the board's serial shows as "Unknown" instead of its real number -- the device still appears in the device bar, with both CPUs identified normally, but its own identity has not.
+        R"TXT(This is different from either CPU's identification problem above, and it does not stop the MAIN or DISPLAY port from being found. The FreeWili OG's own serial number is read from a separate FTDI USB-to-serial chip on the board, not from either RP2040's own serial port. Under OG firmware that chip does not enumerate at all, so an OG board's serial reads "Unknown" for its whole working life -- this is normal, not a fault, and it does not stop anything from being flashed.
 
-This app refuses to flash a device it cannot re-identify by serial, on purpose: the serial is what proves this is still the SAME physical board a moment from now as it is right now, and that is exactly the check that stops a flash from silently landing on a different board that gets swapped into the same USB port. An "Unknown" serial cannot make that promise, so the refusal holds even though the board is clearly connected and its CPUs are clearly identified.
+The board is told apart from other boards by what it DOES report: each RP2040 publishes its own chip id as the USB serial of its serial port, and the device bar shows one of those ("MAIN chip ...") when the FTDI serial is absent. The app refuses to flash only when a board positively CONTRADICTS the one it was working with -- a different FTDI serial or a different chip id on the same USB port, which is what a board swap looks like. A board that says nothing about itself (both CPUs sitting in BOOTSEL, no FTDI) is not refused: there is nothing to contradict, and which CPU is which is decided by each drive's position on the board's own USB hub regardless.
 
-Unplug and replug the board, wait a few seconds for USB enumeration to finish, then rescan. If it keeps coming back "Unknown" on the same board, try a different USB port or a cable you know carries data -- see "Nothing enumerates over USB" above for why that matters even when most things ARE enumerating.)TXT"
+If the app does report that a different device now occupies the port, and you have not swapped boards: unplug and replug the board, wait a few seconds for USB enumeration to finish, then rescan or reopen the flash dialog.)TXT"
     },
 };
 

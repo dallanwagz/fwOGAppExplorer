@@ -80,6 +80,36 @@ The parts that make it more than a file copier:
   description and build identity, so dropping an unknown `.uf2` into `catalog/`
   shows you what it is and what it will do to both CPUs — with nothing
   downloaded and no catalog entry written. See below.
+- **It flashes from whatever state the board is in.** Both CPUs running, either
+  or both sitting in `RPI-RP2` (by button, by an earlier flash, or because a CPU
+  is blank), the display running only its bootloader, the original firmware
+  installed — every state was exercised on hardware. Each CPU is written by its
+  position on the board's own USB hub, the board is re-identified live at every
+  step of a plan, and a CPU that is mid-reboot is waited for rather than
+  refused. Before a MAIN install the DISPLAY is parked in BOOTSEL so a running
+  display app cannot disturb the write; the new MAIN firmware brings it back.
+- **The board does not need a serial number.** A FreeWili OG under OG firmware
+  never enumerates its FTDI, so its serial reads `Unknown` for life; the app
+  tells boards apart by the RP2040 chip ids their serial ports report, and only
+  refuses when a board *contradicts* the one it was working with.
+
+## Command line
+
+`fwogcli.exe` sits beside the GUI and drives the identical flash engine:
+
+```
+fwogcli list                                  every connected board and its CPUs
+fwogcli flash <file.uf2> [--cpu main|display] flash a UF2 (default: MAIN)
+fwogcli install <slug>                        an embedded entry's plan (see `entries`)
+fwogcli entries                               the embedded entries and their plans
+fwogcli info <file.uf2>                       what a UF2 says about itself
+fwogcli bootsel main|display                  reboot a running CPU into BOOTSEL
+   --device <n|serial|chip>  pick a board when several are connected
+   --keep-display            do not park the DISPLAY before a MAIN install
+   --yes                     confirm a drive the engine cannot place by hub port
+```
+
+Exit codes: 0 ok, 1 flash failed, 2 usage/selection, 3 needs `--yes`.
 
 ## The FwOGapp Contract
 
@@ -451,8 +481,10 @@ install**; and the `LegacyDirect` restore. Timings and serial numbers are in
 ## Hardware verification status
 
 [`docs/hardware-verification.md`](docs/hardware-verification.md) records exactly
-what has been confirmed against a physical board and what has not. Read it before
-trusting a flash path you have not exercised yourself.
+what has been confirmed against a physical board and what has not. As of the
+2026-08-18 pass every flash path — OG app, display bootloader, the original
+firmware and back, both erase actions — has been run on hardware from every board
+state listed there, through both the GUI and `fwogcli`.
 
 ## License
 

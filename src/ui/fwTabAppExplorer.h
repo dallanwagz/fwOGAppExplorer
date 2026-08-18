@@ -3,6 +3,7 @@
 #include "catalog/fwOgAppInfo.h"    // OgAppInfo
 #include "catalog/fwUf2Header.h"   // Uf2Info
 #include "core/fwTypes.h"
+#include "device/fwDeviceModel.h"   // BoardFingerprint
 
 #include <cstdint>
 #include <optional>
@@ -94,10 +95,10 @@ public:
         /// Carried by value rather than by slug, so that what gets flashed is
         /// exactly what was on screen when the click happened, even if the
         /// catalog is rebuilt (it is, every frame) in between.
-        CatalogEntry entry;
-        uint64_t     uniqueID = 0;
-        std::string  serial;
-        int          waitedFrames = 0;
+        CatalogEntry     entry;
+        uint64_t         uniqueID = 0;
+        BoardFingerprint print;
+        int              waitedFrames = 0;
     };
 
 private:

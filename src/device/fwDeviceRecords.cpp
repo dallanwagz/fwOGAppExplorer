@@ -10,7 +10,8 @@ std::optional<CpuPortRecord> usbDeviceToRecord(UsbKind kind,
                                                const std::string& port,
                                                const std::string& product,
                                                uint32_t location,
-                                               const std::string& volume)
+                                               const std::string& volume,
+                                               const std::string& serial)
 {
     if (kind == UsbKind::MassStorage) {
         // A drive letter is what makes a mass-storage record actionable -- it
@@ -50,6 +51,7 @@ std::optional<CpuPortRecord> usbDeviceToRecord(UsbKind kind,
     CpuPortRecord r;
     r.port    = port;
     r.product = product;
+    r.serial  = serial;
     r.isSerialMain    = (kind == UsbKind::SerialMain);
     r.isSerialDisplay = (kind == UsbKind::SerialDisplay);
     return r;
@@ -135,7 +137,7 @@ std::vector<CpuPortRecord> toCpuPortRecords(const Fw::FreeWiliDevice& device)
         // is not the USB product string on every platform, and the prefix tests
         // downstream are anchored at position 0. See productStringOf().
         if (auto r = usbDeviceToRecord(fromFwfinder(usb.kind), port, productStringOf(usb),
-                                       usb.location, volume))
+                                       usb.location, volume, usb.serial))
             out.push_back(std::move(*r));
     }
     return out;

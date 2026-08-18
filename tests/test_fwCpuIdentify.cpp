@@ -246,12 +246,15 @@ TEST_CASE("the FWOG prefix requires its trailing space") {
     CHECK(ogBootloaderState(id) == OgBootloaderState::Missing);
 }
 
-TEST_CASE("a blank display -- a bootrom drive -- has no bootloader") {
-    // Nothing is installed on it at all, bootloader included.
+TEST_CASE("a display sitting in the bootrom -- a bootrom drive -- is Unknown, not Missing") {
+    // A drive says nothing about the flash behind it: blank flash presents one,
+    // and so does a DISPLAY this app just rebooted into BOOTSEL ahead of a MAIN
+    // install (fwFlashPrep.h), bootloader intact. Missing here raised the
+    // "install the bootloader" banner during every MAIN flash.
     CpuIdentity id;
     id.displayVolume = "G:/";
     id.displaySource = IdentitySource::HubLocation;
-    CHECK(ogBootloaderState(id) == OgBootloaderState::Missing);
+    CHECK(ogBootloaderState(id) == OgBootloaderState::Unknown);
 }
 
 TEST_CASE("a display that is neither answering nor mounted is Unknown") {

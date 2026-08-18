@@ -1592,3 +1592,159 @@ TEST_CASE("a mapping only covers the step whose volume it names") {
     REQUIRE(h.touched.size() == 1);
     CHECK(h.touched[0] == "COM60");
 }
+
+// ---------------------------------------------------------------------------
+// The identify wait. io.identify() is live in production and a step routinely
+// begins while the board is mid-transition (the previous step rebooted a CPU;
+// the DISPLAY bootloader's console takes ~10 s to appear after MAIN goes
+// quiet), so a refusal is only final once it has held for kIdentifyWaitMs.
+// The fixture's identity is a plain value the test mutates from waitTick(),
+// which is exactly the shape of a board that changes under the engine.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("a CPU that becomes reachable during the identify wait is written, not refused") {
+    // Nothing identified at first; the DISPLAY console appears after a few
+    // ticks (a MAIN erase just happened, and the bootloader's 10-second rule
+    // is running). Before the wait existed this refused on the first look.
+    Harness h;
+    int ticksBeforeConsole = 6;
+    FlashIo io = h.io();
+    const auto tick = io.waitTick;
+    io.waitTick = [&](int ms) {
+        const bool r = tick(ms);
+        if (--ticksBeforeConsole == 0) h.identity.displayPort = "COM65";
+        return r;
+    };
+    ProgressRecorder rec;
+
+    std::vector<FlashStep> plan{ step(TargetCpu::Display) };
+    auto r = runFlashPlan(io, plan, "", rec.fn());
+
+    CHECK(r.outcome == FlashOutcome::Success);
+    REQUIRE(h.touched.size() == 1);
+    CHECK(h.touched[0] == "COM65");
+    // It said what it was doing while it waited: one announcement, refreshes after.
+    CHECK(rec.of(FlashPhase::WaitingForCpu, false).size() == 1);
+    CHECK_FALSE(rec.of(FlashPhase::WaitingForCpu, true).empty());
+    CHECK(rec.of(FlashPhase::WaitingForCpu).front().message.find("DISPLAY") != std::string::npos);
+}
+
+TEST_CASE("a CPU that never becomes reachable is refused only after the whole identify budget") {
+    Harness h;
+    std::vector<FlashStep> plan{ step(TargetCpu::Display) };
+    auto r = runFlashPlan(h.io(), plan, "", kNoProgress);
+
+    CHECK(r.outcome == FlashOutcome::RefusedUnidentified);
+    CHECK(h.waitTicks == kIdentifyWaitMs / kVolumePollMs);
+    CHECK(h.touched.empty());
+    CHECK(h.copiedTo.empty());
+    CHECK(r.message.find(std::to_string(kIdentifyWaitMs / 1000)) != std::string::npos);
+}
+
+TEST_CASE("a cancel during the identify wait aborts cleanly with nothing written") {
+    Harness h;
+    h.cancelAfterTicks = 3;
+    std::vector<FlashStep> plan{ step(TargetCpu::Main) };
+    auto r = runFlashPlan(h.io(), plan, "", kNoProgress);
+
+    CHECK(r.outcome == FlashOutcome::Aborted);
+    CHECK(r.stepsCompleted == 0);
+    CHECK(h.waitTicks == 3);
+    CHECK(h.copiedTo.empty());
+}
+
+TEST_CASE("the wrong CPU's drive being the only one mounted is refused, after waiting for ours") {
+    // Hub position says the one drive is DISPLAY's; MAIN has no port and never
+    // gets one. RefusedWrongCpu -- but only once MAIN has had its chance.
+    Harness h;
+    h.volumes = { "G:/" };
+    h.identity.displayVolume = "G:/";
+    h.identity.displaySource = IdentitySource::HubLocation;
+    std::vector<FlashStep> plan{ step(TargetCpu::Main) };
+    auto r = runFlashPlan(h.io(), plan, "", kNoProgress);
+
+    CHECK(r.outcome == FlashOutcome::RefusedWrongCpu);
+    CHECK(h.waitTicks == kIdentifyWaitMs / kVolumePollMs);
+    CHECK(h.copiedTo.empty());
+}
+
+// ---------------------------------------------------------------------------
+// Causation checked against structure: an arrival the live identity places at
+// the OTHER CPU's hub port is not the touched CPU's drive, however good its
+// timing. The real shape: ERASE MAIN, then touch DISPLAY -- and MAIN's blank
+// flash re-enumerates its own drive a second later, inside the window.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("an arrival hub-located at the other CPU is not taken for the touched CPU's drive") {
+    Harness h;
+    h.identity.displayPort = "COM65";
+    // The MAIN drive comes back on its own 1 tick after the touch, at MAIN's
+    // hub port; the DISPLAY's own drive follows 2 ticks later.
+    FlashIo io = h.io();
+    const auto tick = io.waitTick;
+    int sinceTouch = -1;
+    io.touchPort = [&](const std::string& p) { h.touched.push_back(p); sinceTouch = 0; };
+    io.waitTick = [&](int ms) {
+        const bool r = tick(ms);
+        if (sinceTouch >= 0) {
+            ++sinceTouch;
+            if (sinceTouch == 1) {
+                h.volumes.push_back("F:/");           // MAIN, blank, back on its own
+                h.identity.mainVolume = "F:/";
+                h.identity.mainSource = IdentitySource::HubLocation;
+            }
+            if (sinceTouch == 3) {
+                h.volumes.push_back("G:/");           // the DISPLAY we touched
+                h.identity.displayPort.reset();
+                h.identity.displayVolume = "G:/";
+                h.identity.displaySource = IdentitySource::HubLocation;
+            }
+        }
+        return r;
+    };
+
+    std::vector<FlashStep> plan{ step(TargetCpu::Display) };
+    auto r = runFlashPlan(io, plan, "", kNoProgress);
+
+    CHECK(r.outcome == FlashOutcome::Success);
+    REQUIRE(h.copiedTo.size() == 1);
+    CHECK(h.copiedTo[0] == "G:/");   // NOT F:/, which arrived first
+}
+
+TEST_CASE("two simultaneous arrivals are resolved when structure names the touched CPU's drive") {
+    Harness h;
+    h.identity.displayPort = "COM65";
+    FlashIo io = h.io();
+    const auto tick = io.waitTick;
+    int sinceTouch = -1;
+    io.touchPort = [&](const std::string& p) { h.touched.push_back(p); sinceTouch = 0; };
+    io.waitTick = [&](int ms) {
+        const bool r = tick(ms);
+        if (sinceTouch >= 0 && ++sinceTouch == 1) {
+            h.volumes.push_back("F:/");
+            h.volumes.push_back("G:/");
+            h.identity.mainVolume = "F:/";     h.identity.mainSource = IdentitySource::HubLocation;
+            h.identity.displayPort.reset();
+            h.identity.displayVolume = "G:/";  h.identity.displaySource = IdentitySource::HubLocation;
+        }
+        return r;
+    };
+
+    std::vector<FlashStep> plan{ step(TargetCpu::Display) };
+    auto r = runFlashPlan(io, plan, "", kNoProgress);
+
+    CHECK(r.outcome == FlashOutcome::Success);
+    REQUIRE(h.copiedTo.size() == 1);
+    CHECK(h.copiedTo[0] == "G:/");
+}
+
+TEST_CASE("two simultaneous arrivals with no structure to tell them apart are still refused") {
+    Harness h;
+    h.identity.displayPort = "COM65";
+    h.secondVolumeAppearsAfter = 1;   // the fixture's own two-arrival model, identity silent on drives
+    std::vector<FlashStep> plan{ step(TargetCpu::Display) };
+    auto r = runFlashPlan(h.io(), plan, "", kNoProgress);
+
+    CHECK(r.outcome == FlashOutcome::RefusedAmbiguous);
+    CHECK(h.copiedTo.empty());
+}

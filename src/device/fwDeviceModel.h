@@ -58,6 +58,65 @@ struct DeviceView {
 /// might emit.
 bool serialIsUnidentified(std::string_view serial);
 
+/// Everything a scan can say about WHICH PHYSICAL BOARD this is, as opposed
+/// to which USB socket it is in (DeviceView::uniqueID).
+///
+/// Three independent identifiers, each empty when unknown:
+///  - `serial`      the board's FTDI serial ("FW4788"), the one fwfinder reports
+///                  as DeviceView::serial. On a FreeWili OG running OG firmware
+///                  the FTDI does not enumerate at all, so this is EMPTY FOR THE
+///                  BOARD'S ENTIRE WORKING LIFE -- which is why it cannot be
+///                  the only identifier, and why an app that required it could
+///                  not flash the very boards it exists for.
+///  - `mainChip`    the RP2040 flash unique ID the MAIN CPU's CDC port reports
+///                  as its USB serial (CpuIdentity::mainChipSerial). Per chip,
+///                  survives reflashing, gone while that CPU sits in the bootrom.
+///  - `displayChip` the same for the DISPLAY CPU.
+///
+/// The comparison rule -- fingerprintsContradict() -- refuses on POSITIVE
+/// EVIDENCE of a different board, and only on that: a field both sides know,
+/// with different values. A field either side does not know says nothing, and
+/// is not held against the board. Two boards that both say nothing (both CPUs
+/// in BOOTSEL, no FTDI) therefore do NOT contradict: with nothing to compare,
+/// nothing can be shown to differ. That is a deliberate change from the rule
+/// this replaces, which refused whenever the FTDI serial was unidentified and
+/// so refused every OG board in every state; the wrong-CPU write it guarded
+/// against is prevented one level down, by hub-position identification of the
+/// CPUs, which does not depend on the board's name at all.
+struct BoardFingerprint {
+    std::string serial;
+    std::string mainChip;
+    std::string displayChip;
+
+    /// True when at least one identifier is known.
+    bool identified() const { return !serial.empty() || !mainChip.empty() || !displayChip.empty(); }
+
+    bool operator==(const BoardFingerprint&) const = default;
+};
+
+/// The fingerprint a scan produced. `serial` is normalised through
+/// serialIsUnidentified(): fwfinder's "Unknown" sentinel becomes empty, so it
+/// can never be compared equal to another "Unknown".
+BoardFingerprint fingerprintOf(std::string_view serial, const CpuIdentity& identity);
+BoardFingerprint fingerprintOf(const DeviceView& device);
+
+/// True when `a` and `b` positively name DIFFERENT boards: some identifier
+/// both know, and disagree on. Unknown fields never contradict.
+bool fingerprintsContradict(const BoardFingerprint& a, const BoardFingerprint& b);
+
+/// `stored` with every field it lacks filled in from `seen`. Never overwrites
+/// a known field: learning is one-way, so a value once pinned can only ever
+/// be contradicted, not quietly replaced. Used by DeviceModel::refresh() to
+/// let a selection recorded while the board said nothing about itself learn
+/// who it is the moment the board does.
+BoardFingerprint adoptKnown(BoardFingerprint stored, const BoardFingerprint& seen);
+
+/// One short line naming the board for a human -- the FTDI serial when there is
+/// one, else the MAIN chip id, else the DISPLAY chip id, else "unidentified".
+/// For the device bar: "serial Unknown" told the user nothing about a board
+/// the app could in fact tell apart from every other board on the desk.
+std::string describeFingerprint(const BoardFingerprint& fp);
+
 /// One human-readable line describing what was identified and how. Never omits
 /// a CPU: silence would read as "fine". The identification sources are worded
 /// differently on purpose -- hub position is structural and authoritative, a
@@ -167,14 +226,20 @@ public:
     ///     a temporarily-absent explicit selection is preserved rather than
     ///     cleared.
     ///
-    /// Finally, it adopts a FIRST identifying serial onto a selection that
-    /// never had one: when the recorded selection serial is unidentified (see
-    /// serialIsUnidentified()) and the device it points at now reports a real
-    /// one, that real one is recorded. This is what stops a selection made
-    /// while fwfinder was transiently reporting "Unknown" from being stuck
-    /// unresolvable in selected() forever. It is NOT a relaxation of the
-    /// substitution guard -- see the long comment at the adoption site in
-    /// fwDeviceModel.cpp before touching it.
+    /// Finally, it adopts identifiers onto the selection's fingerprint as the
+    /// board reveals them (adoptKnown()): a selection made while the board said
+    /// nothing about itself -- FTDI absent, both CPUs in the bootrom -- learns
+    /// the FTDI serial or a chip id the moment one is reported, and can then be
+    /// CONTRADICTED by a different board. Adoption fills only empty fields; it
+    /// is not a relaxation of the substitution guard -- see the comment at the
+    /// adoption site in fwDeviceModel.cpp.
+    ///
+    /// One more rule, for an AUTO-selection only: if the single connected board
+    /// contradicts the recorded fingerprint, the selection is dropped and
+    /// re-made on the next pass. With one board there is no choice to protect,
+    /// and a contradiction can only mean the board was swapped -- in which case
+    /// the new board is what the user is looking at and wants selected. (A
+    /// flash in progress is protected separately, by FlashDialog's own gate.)
     void refresh();
 
     /// Asks the background scanner to look again. Non-blocking; the new
@@ -214,17 +279,13 @@ public:
     /// two strings, a CpuIdentity and two scalars: the copy costs nothing
     /// that matters at this scale.
     ///
-    /// Resolves the recorded uniqueID against devices() AND requires its
-    /// serial to still match what was recorded at select()/auto-select time
-    /// (see select()'s comment on why uniqueID alone is not enough); nullopt
-    /// if either check fails, including when the matching-uniqueID device's
-    /// serial is unidentified (see serialIsUnidentified()) on either side.
-    ///
-    /// "What was recorded at select()/auto-select time" is subject to
-    /// refresh()'s adoption of a FIRST identifying serial onto a selection
-    /// that had none -- so a selection made while the board was reporting
-    /// "Unknown" resolves normally once the board says who it is, rather than
-    /// staying unresolvable for the life of the process.
+    /// Resolves the recorded uniqueID against devices() AND requires the
+    /// device found there not to CONTRADICT the fingerprint recorded at
+    /// select()/auto-select time (see BoardFingerprint and select()'s comment
+    /// on why uniqueID alone is not enough); nullopt if either check fails.
+    /// A board that says nothing about itself is NOT a mismatch -- there is
+    /// nothing to mismatch -- which is what lets a FreeWili OG, whose FTDI
+    /// serial never enumerates under OG firmware, be selected and flashed.
     std::optional<DeviceView> selected() const;
 
     /// The device selectedByIdOnly() resolves purely by uniqueID -- WITHOUT
@@ -269,11 +330,12 @@ public:
     /// comment) -- plug a different board into the very port the selected
     /// one just vacated, and uniqueID alone would resolve the selection onto
     /// that new board, not onto "nothing selected". selected() therefore
-    /// also compares `serial`, recorded here alongside uniqueID, before
-    /// reporting a match; an empty serial on either side is never treated as
-    /// a match. This is what actually makes the selection resolve back onto
-    /// the same physical device and never onto whatever happens to occupy
-    /// its old slot.
+    /// also checks the board's fingerprint (FTDI serial and RP2040 chip ids,
+    /// see BoardFingerprint), recorded here alongside uniqueID, and refuses
+    /// on a contradiction. This is what actually makes the selection resolve
+    /// back onto the same physical device and never onto a different one
+    /// that happens to occupy its old slot -- when the two can be told apart
+    /// at all.
     ///
     /// Always records an EXPLICIT selection, even when it happens to name
     /// the same device refresh()'s auto-select would have chosen anyway --
@@ -290,19 +352,18 @@ private:
     ScanFn m_scan;
     std::vector<DeviceView> m_devices;
     std::optional<uint64_t> m_selectedId;
-    /// The serial recorded alongside m_selectedId at select()/auto-select
-    /// time -- selected() requires this to still match before reporting a
-    /// hit, so a different board landing on the same USB port (same
-    /// uniqueID) is never silently reported as the still-selected device.
-    /// See select()'s comment.
+    /// The board fingerprint recorded alongside m_selectedId at
+    /// select()/auto-select time -- selected() refuses when the device now at
+    /// that uniqueID CONTRADICTS it (fingerprintsContradict()), so a different
+    /// board landing on the same USB port is never silently reported as the
+    /// still-selected device. See select()'s comment.
     ///
     /// Written in exactly three places: select(), refresh()'s auto-select, and
-    /// refresh()'s adoption of a first identifying serial onto a selection
-    /// recorded while the board was reporting fwfinder's "Unknown" sentinel.
-    /// That last one only ever replaces an UNIDENTIFIED value, so a real
-    /// serial, once pinned, is never overwritten by anything short of a new
-    /// select() -- which is what keeps the substitution check meaningful.
-    std::string m_selectedSerial;
+    /// refresh()'s adoption (adoptKnown()) of identifiers onto a selection that
+    /// did not yet know them. Adoption only ever fills EMPTY fields, so a value
+    /// once pinned is never overwritten by anything short of a new select() --
+    /// which is what keeps the substitution check meaningful.
+    BoardFingerprint m_selectedPrint;
     /// True when m_selectedId was set by refresh()'s auto-select rather than
     /// by an explicit select() call. Distinguishing the two is what lets
     /// refresh() clear an auto-selection when a second device shows up while

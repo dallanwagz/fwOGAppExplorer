@@ -33,11 +33,17 @@ constexpr uint32_t kHubPortDisplay = 2;
 /// at a known hub port, with a drive letter to write to. Discarding it is what
 /// made a CPU in the bootrom show as "not identified" and pushed the app into
 /// asking the user, or running a probe, for a fact the USB tree already stated.
+///
+/// `serial` is the USB serial string of the device -- kept only on a SERIAL
+/// record (it is the RP2040 chip id, which identifies the board when the FTDI
+/// serial is missing; see CpuPortRecord::serial). A mass-storage record drops
+/// it: every RP2040 bootrom reports the same one.
 std::optional<CpuPortRecord> usbDeviceToRecord(UsbKind kind,
                                                const std::string& port,
                                                const std::string& product,
                                                uint32_t location = 0,
-                                               const std::string& volume = {});
+                                               const std::string& volume = {},
+                                               const std::string& serial = {});
 
 } // namespace fwog
 

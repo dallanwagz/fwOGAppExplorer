@@ -78,6 +78,12 @@ public:
     /// outcome has been handed to the modal.
     bool isInlineBusy() const;
 
+    /// True once a flash started by beginImmediate() has finished with
+    /// Success and nothing has been started since. Success deliberately raises
+    /// no modal (see draw()), so this is how the caller says "done" in place --
+    /// a bar that quietly vanished at 100% read as nothing having happened.
+    bool inlineSucceeded() const;
+
     /// Live progress of the current run, for a caller drawing its own bar:
     /// 0..1, monotonic within one flash (see FlashController::progressFraction).
     float progressFraction() const;
@@ -163,21 +169,31 @@ private:
     bool m_shouldOpenPopup = false;
 
     CatalogEntry m_entry;
-    /// The DeviceView::uniqueID and DeviceView::serial of the device selected
+    /// The DeviceView::uniqueID and BoardFingerprint of the device selected
     /// when open() was called -- NOT a CpuIdentity snapshot. See open()'s
     /// comment: the identity actually used to flash is re-read fresh, from
     /// the current DeviceModel, only once Start Flashing is clicked and only
-    /// after confirming BOTH still match this device (selectionUnchanged()):
-    /// uniqueID alone matches a SOCKET, not a board -- a different board
-    /// substituted into the same port would pass a uniqueID-only check.
-    uint64_t    m_openedUniqueID = 0;
-    std::string m_openedSerial;
+    /// after confirming the board there does not contradict this one
+    /// (selectionUnchanged()): uniqueID alone matches a SOCKET, not a board --
+    /// a different board substituted into the same port would pass a
+    /// uniqueID-only check.
+    ///
+    /// The fingerprint is RE-CAPTURED when a run pauses on
+    /// AwaitingConfirmation (see draw()): the plan may already have rewritten
+    /// a CPU by then, and the pause is what the resume gate must measure a
+    /// swap against -- not the moment the dialog opened.
+    uint64_t         m_openedUniqueID = 0;
+    BoardFingerprint m_openedPrint;
+    bool             m_printCapturedForPause = false;
 
     std::vector<FlashStep>   m_plan;
     std::vector<std::string> m_warnings;
     /// droppedEraseNote(): why the plan above is one step shorter than the
     /// entry's own, or empty. See refreshPlan().
     std::string              m_droppedNote;
+    /// The DISPLAY-quieting preparation, when the plan and the board call for
+    /// it (quietDisplayBeforeMainWrite, fwFlashPrep.h), or empty.
+    std::string              m_prepNote;
 
     char m_confirmBuf[64] = {};
 

@@ -94,6 +94,16 @@ struct CpuPortRecord {
     bool isMassStorageMain    = false;
     bool isMassStorageDisplay = false;
 
+    /// The USB serial string of the CDC device behind `port`, empty when the
+    /// host did not report one or for a volume record. Under the pico-sdk
+    /// (both the OG BSP and the original firmware) this is the RP2040's flash
+    /// unique ID -- a per-chip constant that survives reflashing -- and it is
+    /// what identifies the BOARD when the FTDI serial fwfinder normally reads
+    /// is absent (see BoardFingerprint, fwDeviceModel.h). Deliberately not
+    /// taken from a bootrom drive: every RP2040's bootrom publishes the same
+    /// serial, so that one names nothing.
+    std::string serial;
+
     bool operator==(const CpuPortRecord&) const = default;
 };
 
@@ -121,6 +131,15 @@ struct CpuIdentity {
     /// volume the prober took over is no longer mass storage at all.
     std::optional<std::string> mainVolume;
     std::optional<std::string> displayVolume;
+
+    /// The USB serial of the CDC device each CPU's PORT was resolved from --
+    /// the RP2040 flash unique ID, a per-chip constant -- or empty when that
+    /// CPU is not answering on a port (a bootrom drive carries no usable
+    /// serial). Carried so the BOARD can be recognised across a scan when the
+    /// FTDI serial is missing, which on an OG board running OG firmware is
+    /// always: see BoardFingerprint (fwDeviceModel.h).
+    std::string mainChipSerial;
+    std::string displayChipSerial;
 
     /// The USB product string of the resolved DISPLAY port, empty when that CPU
     /// is not answering on one.

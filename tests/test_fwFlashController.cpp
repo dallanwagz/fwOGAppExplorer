@@ -548,129 +548,124 @@ TEST_CASE("lastProgress is nullopt until the first event, then tracks the latest
 // Idle-state handling). Pure and DeviceModel-free, so the mismatch refusal
 // this backs is directly testable without a worker thread or real hardware.
 //
-// Fix round: uniqueID alone was found to be insufficient -- it is
-// fwfinder's topological port-chain ID (see the header comment on
-// selectionUnchanged in fwFlashController.h), so a DIFFERENT board plugged
-// into the SAME port comes back with the SAME uniqueID. selectionUnchanged
-// now also compares `serial`, and returns a SelectionCheck rather than a
-// bool so the four cases below (matches / nothing selected / same port,
-// different board / different port) are each individually testable and each
-// produce a distinguishable refusal message via selectionCheckMessage().
+// uniqueID alone is insufficient -- it is fwfinder's topological port-chain
+// ID (see the header comment on selectionUnchanged in fwFlashController.h), so
+// a DIFFERENT board plugged into the SAME port comes back with the SAME
+// uniqueID. selectionUnchanged also compares the board's FINGERPRINT (FTDI
+// serial + RP2040 chip ids, see BoardFingerprint) and refuses on a
+// CONTRADICTION -- an identifier both sides know, with different values. It
+// does NOT refuse a board that says nothing about itself: an OG board running
+// OG firmware never enumerates its FTDI, so a serial-required rule refused the
+// very boards this app exists to flash.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("selectionUnchanged is Unchanged only when uniqueID AND serial both match")
+namespace {
+BoardFingerprint fp(std::string serial, std::string mainChip = "", std::string displayChip = "")
+{
+    return BoardFingerprint{ std::move(serial), std::move(mainChip), std::move(displayChip) };
+}
+} // namespace
+
+TEST_CASE("selectionUnchanged is Unchanged when uniqueID matches and the FTDI serial agrees")
 {
     DeviceView device;
     device.uniqueID = 42;
     device.serial   = "FW4788";
 
-    CHECK(selectionUnchanged(std::optional<DeviceView>(device), 42, "FW4788") == SelectionCheck::Unchanged);
+    CHECK(selectionUnchanged(std::optional<DeviceView>(device), 42, fp("FW4788")) == SelectionCheck::Unchanged);
 }
 
 TEST_CASE("selectionUnchanged is NothingSelected when nothing is selected any more")
 {
-    CHECK(selectionUnchanged(std::nullopt, 42, "FW4788") == SelectionCheck::NothingSelected);
+    CHECK(selectionUnchanged(std::nullopt, 42, fp("FW4788")) == SelectionCheck::NothingSelected);
 }
 
 TEST_CASE("selectionUnchanged is DifferentBoard when the SAME port now holds a DIFFERENT board")
 {
-    // The exact hazard the previous uniqueID-only check missed: a replug can
-    // put an entirely different board on the same USB port, and fwfinder's
-    // uniqueID (packed purely from the port chain) comes back identical for
-    // it. Only comparing serial as well catches this.
+    // The exact hazard a uniqueID-only check misses: a replug can put an
+    // entirely different board on the same USB port, and fwfinder's uniqueID
+    // (packed purely from the port chain) comes back identical for it.
     DeviceView device;
     device.uniqueID = 42;   // SAME port as opened
     device.serial   = "FW9999"; // a DIFFERENT physical board
 
-    CHECK(selectionUnchanged(std::optional<DeviceView>(device), 42, "FW4788") == SelectionCheck::DifferentBoard);
+    CHECK(selectionUnchanged(std::optional<DeviceView>(device), 42, fp("FW4788")) == SelectionCheck::DifferentBoard);
 }
 
 TEST_CASE("selectionUnchanged is DifferentPort when the SAME board moved to a DIFFERENT port")
 {
-    // The reciprocal case: the serial still matches (genuinely the same
-    // physical unit), but uniqueID does not -- COM ports have almost
-    // certainly been renumbered by the move, so the captured identity is
-    // stale regardless of whose board it is.
     DeviceView device;
     device.uniqueID = 77;      // DIFFERENT port from the one opened on
     device.serial   = "FW4788"; // the SAME physical board
 
-    CHECK(selectionUnchanged(std::optional<DeviceView>(device), 42, "FW4788") == SelectionCheck::DifferentPort);
+    CHECK(selectionUnchanged(std::optional<DeviceView>(device), 42, fp("FW4788")) == SelectionCheck::DifferentPort);
 }
 
-TEST_CASE("selectionUnchanged treats an empty serial on either side as a mismatch, never a match")
+TEST_CASE("selectionUnchanged tells boards apart by RP2040 chip id when there is no FTDI serial")
 {
-    // UnidentifiedSerial, not DifferentBoard: still a refusal (that is what
-    // matters, and the "never Unchanged" assertions below pin it), but a
-    // separate one so the message can say "cannot be confirmed" instead of
-    // asserting a swap nobody has observed. See the enum comment.
-    DeviceView bothEmpty;
-    bothEmpty.uniqueID = 42;
-    bothEmpty.serial   = "";
-    CHECK(selectionUnchanged(std::optional<DeviceView>(bothEmpty), 42, "") == SelectionCheck::UnidentifiedSerial);
-    CHECK(selectionUnchanged(std::optional<DeviceView>(bothEmpty), 42, "") != SelectionCheck::Unchanged);
-
-    DeviceView currentEmpty;
-    currentEmpty.uniqueID = 42;
-    currentEmpty.serial   = "";
-    CHECK(selectionUnchanged(std::optional<DeviceView>(currentEmpty), 42, "FW4788") == SelectionCheck::UnidentifiedSerial);
-
-    DeviceView openedEmptyCurrent;
-    openedEmptyCurrent.uniqueID = 42;
-    openedEmptyCurrent.serial   = "FW4788";
-    CHECK(selectionUnchanged(std::optional<DeviceView>(openedEmptyCurrent), 42, "") == SelectionCheck::UnidentifiedSerial);
-}
-
-TEST_CASE("selectionUnchanged treats fwfinder's \"Unknown\" serial sentinel as a mismatch, not a match")
-{
-    // Fix round 3: "Unknown" is fwfinder's own literal (fwfinder.cpp, the
-    // FreeWili branch taken when no FTDI child device is found), not an
-    // empty string -- observed on real hardware in a degraded
-    // identification state. Two DIFFERENT boards on the same port that both
-    // happen to be in that degraded state must still refuse: comparing
-    // "Unknown" == "Unknown" as a genuine match would reopen exactly the
-    // hazard this guard exists to close.
+    // The FreeWili OG under OG firmware: fwfinder says "Unknown" for the
+    // serial, for the whole life of the board. The chip ids the CDC ports
+    // report are what tell two such boards apart.
     DeviceView device;
-    device.uniqueID = 42;   // SAME port as opened
+    device.uniqueID = 42;
     device.serial   = "Unknown";
+    device.identity.mainPort = "COM10";
+    device.identity.mainChipSerial = "E463A8574B5D3D35";
 
-    CHECK(selectionUnchanged(std::optional<DeviceView>(device), 42, "Unknown") == SelectionCheck::UnidentifiedSerial);
-    // The property that actually protects the board: whatever this is called,
-    // it is never the one answer that permits a flash.
-    CHECK(selectionUnchanged(std::optional<DeviceView>(device), 42, "Unknown") != SelectionCheck::Unchanged);
+    // Same chip on the port -> the same board.
+    CHECK(selectionUnchanged(std::optional<DeviceView>(device), 42, fp("", "E463A8574B5D3D35"))
+          == SelectionCheck::Unchanged);
+    // A different chip on the same port -> a different board, and it says so.
+    CHECK(selectionUnchanged(std::optional<DeviceView>(device), 42, fp("", "AAAAAAAAAAAAAAAA"))
+          == SelectionCheck::DifferentBoard);
+    // The DISPLAY chip works the same way, independently.
+    device.identity.displayPort = "COM11";
+    device.identity.displayChipSerial = "E463A8574B183D35";
+    CHECK(selectionUnchanged(std::optional<DeviceView>(device), 42, fp("", "", "E463A8574B183D35"))
+          == SelectionCheck::Unchanged);
+    CHECK(selectionUnchanged(std::optional<DeviceView>(device), 42, fp("", "", "BBBBBBBBBBBBBBBB"))
+          == SelectionCheck::DifferentBoard);
+    // And an FTDI serial known on both sides still decides on its own.
+    CHECK(selectionUnchanged(std::optional<DeviceView>(device), 42, fp("FW1111", "E463A8574B5D3D35"))
+          == SelectionCheck::Unchanged);   // current has no serial to disagree with
+    device.serial = "FW2222";
+    CHECK(selectionUnchanged(std::optional<DeviceView>(device), 42, fp("FW1111", "E463A8574B5D3D35"))
+          == SelectionCheck::DifferentBoard);
 }
 
-TEST_CASE("a board that goes unidentified mid-dialog refuses, but is not accused of being a different board")
+TEST_CASE("selectionUnchanged does not refuse a board that says nothing about itself")
 {
-    // The mirror of the DeviceModel adoption fix: the dialog opened on a
-    // CONFIRMED serial and the board then dropped to fwfinder's "Unknown"
-    // part-way through re-enumeration. That must keep refusing -- from this
-    // data it is indistinguishable from a swap in progress -- but the refusal
-    // must not TELL the user a different board is plugged in, because nothing
-    // observed that.
-    DeviceView reenumerating;
-    reenumerating.uniqueID = 42;          // same port the dialog opened on
-    reenumerating.serial   = "Unknown";   // ...but momentarily saying nothing
-
-    const SelectionCheck check = selectionUnchanged(std::optional<DeviceView>(reenumerating), 42, "FW6548");
-    CHECK(check == SelectionCheck::UnidentifiedSerial);
-    CHECK(check != SelectionCheck::Unchanged);              // refuses, which is the point
-    // Freshness cannot rescue it either -- a refusal is passed through as-is.
-    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(reenumerating), 42, "FW6548",
-                                  std::chrono::milliseconds(0)) == SelectionCheck::UnidentifiedSerial);
-
-    const auto msg = selectionCheckMessage(check);
-    CHECK_FALSE(msg.empty());
-    CHECK(msg != selectionCheckMessage(SelectionCheck::DifferentBoard));
-    CHECK(msg.find("different device") == std::string::npos);   // no swap is being asserted
-    CHECK(msg.find("not reporting a serial") != std::string::npos);
-
-    // And a REAL substitution is still called what it is, so splitting the two
-    // has not blunted the message that matters most.
-    DeviceView swapped;
-    swapped.uniqueID = 42;
-    swapped.serial   = "FW2222";
-    CHECK(selectionUnchanged(std::optional<DeviceView>(swapped), 42, "FW6548") == SelectionCheck::DifferentBoard);
+    // No FTDI, both CPUs in the bootrom: nothing to compare, so nothing can be
+    // shown to differ. This is the state a board is in when it most needs
+    // flashing (both erased, or being recovered), and the rule this replaced
+    // refused it outright. What protects the board here is hub-position
+    // identification of the CPUs, which the engine applies to whatever board
+    // is present.
+    DeviceView silent;
+    silent.uniqueID = 42;
+    silent.serial   = "Unknown";
+    CHECK(selectionUnchanged(std::optional<DeviceView>(silent), 42, fp("")) == SelectionCheck::Unchanged);
+    CHECK(selectionUnchanged(std::optional<DeviceView>(silent), 42, fp("Unknown")) == SelectionCheck::Unchanged);
+    // Opened with a serial, then the board went quiet (mid-re-enumeration, or
+    // MAIN just dropped into BOOTSEL and took its chip id with it): not a
+    // contradiction, not a refusal.
+    CHECK(selectionUnchanged(std::optional<DeviceView>(silent), 42, fp("FW4788", "E463A8574B5D3D35"))
+          == SelectionCheck::Unchanged);
+    // Opened quiet, now identified: same answer, same reason.
+    DeviceView identified;
+    identified.uniqueID = 42;
+    identified.serial   = "FW4788";
+    CHECK(selectionUnchanged(std::optional<DeviceView>(identified), 42, fp("")) == SelectionCheck::Unchanged);
+    // Two "Unknown"s are not compared as equal -- they are compared as
+    // nothing, which happens to give the same permissive answer here but
+    // matters when a chip id IS known: that still refuses.
+    DeviceView otherChip;
+    otherChip.uniqueID = 42;
+    otherChip.serial   = "Unknown";
+    otherChip.identity.mainPort = "COM10";
+    otherChip.identity.mainChipSerial = "CCCCCCCCCCCCCCCC";
+    CHECK(selectionUnchanged(std::optional<DeviceView>(otherChip), 42, fp("Unknown", "E463A8574B5D3D35"))
+          == SelectionCheck::DifferentBoard);
 }
 
 TEST_CASE("selectionCheckMessage is empty only for Unchanged, and distinguishes board-swap from port-move")
@@ -692,14 +687,6 @@ TEST_CASE("selectionCheckMessage is empty only for Unchanged, and distinguishes 
     CHECK_FALSE(staleMsg.empty());
     CHECK(staleMsg != boardMsg);
     CHECK(staleMsg != portMsg);
-
-    // ...and neither must someone whose board is merely mid-reconnect. Every
-    // refusal reason gets its own sentence; only Unchanged is silent.
-    const auto unidMsg = selectionCheckMessage(SelectionCheck::UnidentifiedSerial);
-    CHECK_FALSE(unidMsg.empty());
-    CHECK(unidMsg != boardMsg);
-    CHECK(unidMsg != portMsg);
-    CHECK(unidMsg != staleMsg);
 }
 
 // ---------------------------------------------------------------------------
@@ -729,7 +716,7 @@ TEST_CASE("selectionUnchangedFresh approves an identity match backed by a recent
 {
     // The ordinary case: the dialog is holding the scanner in its fast-poll
     // window, so the snapshot is a few hundred ms old at worst.
-    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(sameBoard()), 42, "FW4788",
+    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(sameBoard()), 42, fp("FW4788"),
                                   std::chrono::milliseconds(200)) == SelectionCheck::Unchanged);
 }
 
@@ -737,7 +724,7 @@ TEST_CASE("selectionUnchangedFresh refuses an identity match backed by a stale s
 {
     // Exactly the frozen-scanner case: the data says "same board" because
     // nobody has looked since before the swap.
-    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(sameBoard()), 42, "FW4788",
+    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(sameBoard()), 42, fp("FW4788"),
                                   std::chrono::milliseconds(30000)) == SelectionCheck::StaleSnapshot);
 }
 
@@ -746,16 +733,16 @@ TEST_CASE("selectionUnchangedFresh fails CLOSED when the snapshot's age is unkno
     // nullopt means no scan has ever completed (or the platform cannot say).
     // That is the least verified state there is and must refuse, not default
     // to "fresh enough".
-    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(sameBoard()), 42, "FW4788",
+    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(sameBoard()), 42, fp("FW4788"),
                                   std::nullopt) == SelectionCheck::StaleSnapshot);
 }
 
 TEST_CASE("selectionUnchangedFresh's freshness boundary is inclusive at maxAge and refuses beyond it")
 {
     const auto maxAge = std::chrono::milliseconds(1000);
-    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(sameBoard()), 42, "FW4788",
+    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(sameBoard()), 42, fp("FW4788"),
                                   std::chrono::milliseconds(1000), maxAge) == SelectionCheck::Unchanged);
-    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(sameBoard()), 42, "FW4788",
+    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(sameBoard()), 42, fp("FW4788"),
                                   std::chrono::milliseconds(1001), maxAge) == SelectionCheck::StaleSnapshot);
 }
 
@@ -764,9 +751,9 @@ TEST_CASE("selectionUnchangedFresh's default maxAge is the one the flash dialog 
     // Guards the constant itself: a value the fast-poll window cannot keep up
     // with would make the Proceed button permanently unreachable, and one much
     // larger would let an approval drift further behind reality than intended.
-    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(sameBoard()), 42, "FW4788",
+    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(sameBoard()), 42, fp("FW4788"),
                                   kMaxSnapshotAgeForFlash) == SelectionCheck::Unchanged);
-    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(sameBoard()), 42, "FW4788",
+    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(sameBoard()), 42, fp("FW4788"),
                                   kMaxSnapshotAgeForFlash + std::chrono::milliseconds(1))
           == SelectionCheck::StaleSnapshot);
 }
@@ -779,14 +766,14 @@ TEST_CASE("selectionUnchangedFresh keeps the specific refusal rather than maskin
     // flash is gated on freshness.
     DeviceView swapped = sameBoard();
     swapped.serial = "FW9999";          // same port, different board
-    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(swapped), 42, "FW4788",
+    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(swapped), 42, fp("FW4788"),
                                   std::nullopt) == SelectionCheck::DifferentBoard);
 
     DeviceView moved = sameBoard();
     moved.uniqueID = 77;                // same board, different port
-    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(moved), 42, "FW4788",
+    CHECK(selectionUnchangedFresh(std::optional<DeviceView>(moved), 42, fp("FW4788"),
                                   std::chrono::milliseconds(30000)) == SelectionCheck::DifferentPort);
 
-    CHECK(selectionUnchangedFresh(std::nullopt, 42, "FW4788",
+    CHECK(selectionUnchangedFresh(std::nullopt, 42, fp("FW4788"),
                                   std::nullopt) == SelectionCheck::NothingSelected);
 }
