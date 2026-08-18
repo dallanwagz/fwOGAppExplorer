@@ -48,7 +48,7 @@
     },
     {
       "slug": "freewili-original-deprecated",
-      "name": "Original FreeWili (deprecated firmware)",
+      "name": "Deprecated OLD firmware (do not use)",
       "tagline": "The original FreeWili 1 firmware. Does not use the display bootloader.",
       "description": "Writes the original main and display firmware directly to both CPUs. The DISPLAY CPU is erased first, then written, and the MAIN CPU is written last -- the DISPLAY CPU's bootloader console only enumerates after about 10 seconds of MAIN-CPU silence, so it has to be dealt with before the MAIN CPU starts running this firmware and talking continuously. This REMOVES the display bootloader: returning to FreeWili 1-OG will require reinstalling it from this tab.",
       "flashScheme": "LegacyDirect",

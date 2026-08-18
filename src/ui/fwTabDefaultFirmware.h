@@ -42,14 +42,22 @@ struct ProbeAccess {
     std::function<void()>        begin;
 };
 
-/// The Default Firmware tab: two big install buttons and a Danger zone.
+/// The Default Firmware tab: one big install button and a Danger zone.
 ///
 ///   1. FreeWili 1-OG -- installs the wiliOGBsp display bootloader
-///      (FlashScheme::DisplayBootloader).
-///   2. Original FreeWili firmware (deprecated) -- the LegacyDirect plan.
-///   3. Danger zone -- Erase MAIN CPU and Erase DISPLAY CPU, each collapsed by
-///      default and each behind its own typed confirmation ("ERASE MAIN" /
-///      "ERASE DISPLAY", eraseConfirmationMatches()).
+///      (FlashScheme::DisplayBootloader). The one thing this tab is FOR, and
+///      now the only thing above the fold.
+///   2. Danger zone, each item collapsed by default:
+///        a. Erase MAIN CPU     -- typed confirmation "ERASE MAIN"
+///        b. Erase DISPLAY CPU  -- typed confirmation "ERASE DISPLAY"
+///           (both eraseConfirmationMatches())
+///        c. Deprecated OLD firmware -- the LegacyDirect plan. Down here
+///           because it takes a working OG board backwards: it removes the
+///           display bootloader, and every OG app stops working until that is
+///           reinstalled. No typed confirmation, unlike the two erases -- it
+///           writes firmware rather than destroying it, and the flash dialog
+///           still shows the whole plan first; what it needed was to stop
+///           being the second thing a user sees on this tab.
 ///
 /// Everything else is deliberately absent from the default view. The plan, the
 /// version table and the advisory warnings live behind a per-card "Details"
