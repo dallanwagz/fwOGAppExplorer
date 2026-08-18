@@ -40,6 +40,22 @@ struct Located {
     bool resolved() const { return (port || volume) && !contradictory(); }
 };
 
+/// Copy each resolved PORT's USB serial (the RP2040 chip id) onto the identity.
+/// Read from the record that supplied the port, after both passes, so it is
+/// always the serial of the device the identity actually names -- never a
+/// serial from a record a structural rule declined to use. Empty stays empty:
+/// a CPU in the bootrom, or a host that reports no serial, contributes nothing,
+/// and BoardFingerprint treats nothing as "unknown", never as a match.
+CpuIdentity finishIdentity(CpuIdentity id, std::span<const CpuPortRecord> records)
+{
+    for (const auto& r : records) {
+        if (r.port.empty()) continue;
+        if (id.mainPort && r.port == *id.mainPort)       id.mainChipSerial    = r.serial;
+        if (id.displayPort && r.port == *id.displayPort) id.displayChipSerial = r.serial;
+    }
+    return id;
+}
+
 } // namespace
 
 CpuIdentity identifyCpus(std::span<const CpuPortRecord> records)
@@ -96,7 +112,7 @@ CpuIdentity identifyCpus(std::span<const CpuPortRecord> records)
     // --- Pass 2: product strings, only for whichever CPU pass 1 missed.
     // Skip any port already identified in pass 1, to prevent a contradicting
     // product string from overriding structural position.
-    if (main.resolved() && display.resolved()) return id;
+    if (main.resolved() && display.resolved()) return finishIdentity(std::move(id), records);
 
     Candidate strMain, strDisplay;
     for (const auto& r : records) {
@@ -127,7 +143,7 @@ CpuIdentity identifyCpus(std::span<const CpuPortRecord> records)
         for (const auto& r : records)
             if (r.port == *id.displayPort) { id.displayProduct = r.product; break; }
 
-    return id;
+    return finishIdentity(std::move(id), records);
 }
 
 OgBootloaderState ogBootloaderState(const CpuIdentity& identity)
@@ -149,10 +165,13 @@ OgBootloaderState ogBootloaderState(const CpuIdentity& identity)
         return p.rfind(kOgPrefix, 0) == 0 ? OgBootloaderState::Present
                                           : OgBootloaderState::Missing;
     }
-    // A bootrom drive where the DISPLAY CPU should be: blank flash, so nothing
-    // is installed on it.
-    if (identity.displayVolume) return OgBootloaderState::Missing;
-
+    // A bootrom drive where the DISPLAY CPU should be says NOTHING about what
+    // is in its flash. Blank flash re-enumerates as RPI-RP2, yes -- but so does
+    // a DISPLAY that this very app rebooted into BOOTSEL at 1200 baud before a
+    // MAIN install (quietDisplayBeforeMainWrite, fwFlashPrep.h), and that one
+    // still has its bootloader. Calling it Missing put a "No OG bootloader --
+    // Install it" banner on screen in the middle of every MAIN flash, pointing
+    // at an install that begins by ERASING MAIN. Unknown is the honest answer.
     return OgBootloaderState::Unknown;
 }
 

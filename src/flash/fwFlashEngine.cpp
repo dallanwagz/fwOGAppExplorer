@@ -197,13 +197,25 @@ struct WaitReporter {
 /// which this step is not going to write to and does not care about, made every
 /// touch look ambiguous. Only two drives arriving from ONE touch is a real
 /// ambiguity, and that is what is refused.
+///
+/// CAUSATION IS CHECKED AGAINST STRUCTURE. An arrival that the live identity
+/// places at the OTHER CPU's hub port is not ours, however well its timing
+/// fits, and is folded into the baseline so the wait goes on. This closes a
+/// real race: the step after ERASE MAIN touches the DISPLAY, and MAIN's blank
+/// flash re-enumerates its own RPI-RP2 drive a second or so later -- squarely
+/// inside the window in which this wait is looking for "the drive that
+/// appeared". Timing alone would hand the DISPLAY bootloader to the MAIN CPU.
+/// The same structure resolves two simultaneous arrivals when it can name
+/// which one is the target's; only when it cannot is that still Ambiguous.
+/// An identity that knows nothing about drives (a snapshot with ports only,
+/// which is what every test fixture supplies) changes nothing here.
 struct NewVolumeWait {
     WaitOutcome outcome = WaitOutcome::TimedOut;
     std::string volume;   ///< set only when outcome == Ready
 };
 
-NewVolumeWait waitForNewVolume(const FlashIo& io, const std::vector<std::string>& before,
-                               const WaitReporter& reporter)
+NewVolumeWait waitForNewVolume(const FlashIo& io, std::vector<std::string> before,
+                               TargetCpu target, const WaitReporter& reporter)
 {
     reporter.announce();
 
@@ -214,12 +226,30 @@ NewVolumeWait waitForNewVolume(const FlashIo& io, const std::vector<std::string>
                 fresh.push_back(v);
         return fresh;
     };
+    const auto contains = [](const std::vector<std::string>& vs, const std::string& v) {
+        return std::find(vs.begin(), vs.end(), v) != vs.end();
+    };
 
     int waited = 0;
     for (;;) {
         auto fresh = arrivals(io.findVolumes());
-        if (fresh.size() >= 2) return { WaitOutcome::Ambiguous, {} };
-        if (fresh.size() == 1) return { WaitOutcome::Ready, std::move(fresh.front()) };
+        if (!fresh.empty()) {
+            const CpuIdentity id = io.identify();
+            const auto& mine   = volumeForCpu(id, target);
+            const auto& theirs = volumeForCpu(id, otherCpu(target));
+            // Structure names ours among the arrivals: take it, whatever else came.
+            if (mine && contains(fresh, *mine)) return { WaitOutcome::Ready, *mine };
+            // Structure names the other CPU's drive among them: not ours; stop
+            // counting it as an arrival and keep looking.
+            if (theirs && contains(fresh, *theirs)) {
+                before.push_back(*theirs);
+                std::erase(fresh, *theirs);
+            }
+            if (fresh.size() >= 2) return { WaitOutcome::Ambiguous, {} };
+            if (fresh.size() == 1) return { WaitOutcome::Ready, std::move(fresh.front()) };
+        }
+        // reporter.budgetMs, not kVolumeWaitMs: an erased CPU takes far longer
+        // to come back than a touched one does -- see kEraseRebootWaitMs.
         if (waited >= reporter.budgetMs) return { WaitOutcome::TimedOut, {} };
         if (!io.waitTick(kVolumePollMs)) return { WaitOutcome::Cancelled, {} };
         waited += kVolumePollMs;
@@ -271,17 +301,22 @@ float flashPhaseFraction(FlashPhase phase)
 {
     // In REPORTING order, which is not FlashPhase's declaration order:
     // StepFinished is reported the instant the copy succeeds and
-    // WaitingForRelease only after it. Using the enumerator as an ordinal
-    // instead would run a bar backwards on every step but the last.
+    // WaitingForRelease only after it, and Preparing -- declared last -- is
+    // reported before anything. Using the enumerator as an ordinal instead
+    // would run a bar backwards on every step but the last.
     //
     // No `default:`, deliberately, so that adding a phase is a compile error
     // here rather than a silent 0.0f that would make the bar jump to the start
     // of the step. Same reason the guard and recovery switches elsewhere in
     // this project have none.
     switch (phase) {
+    // Preparation precedes step 0 and is not part of it; it must not lift the
+    // bar off the start, so it shares StepStarted's anchor.
+    case FlashPhase::Preparing:         return 0.00f;
     case FlashPhase::StepStarted:       return 0.00f;
     case FlashPhase::Loading:           return 0.10f;
     case FlashPhase::Verifying:         return 0.25f;
+    case FlashPhase::WaitingForCpu:     return 0.30f;
     case FlashPhase::Touching:          return 0.35f;
     case FlashPhase::WaitingForVolume:  return 0.45f;
     case FlashPhase::Copying:           return 0.60f;
@@ -427,21 +462,44 @@ FlashResult runFlashPlan(const FlashIo& io,
         }
 
         // --- Decide what the mounted volumes mean ---------------------------
+        //
+        // Re-evaluated, not decided once. io.identify() is live in production
+        // and the board is routinely mid-transition when a step begins (see
+        // kIdentifyWaitMs), so a refusal is only FINAL once it has held for
+        // the whole identify budget; every other action is taken the moment it
+        // is available. Nothing here touches the board: this loop only looks.
         auto volumes = io.findVolumes();
-        const auto identity = io.identify();
-        const auto port = (step.cpu == TargetCpu::Main) ? identity.mainPort
-                                                        : identity.displayPort;
-        // The OTHER CPU's port is evidence too -- see decideAction(). A CPU
-        // publishing a serial port is running firmware and so is none of the
-        // mounted bootrom drives, which is what lets a single drive be named by
-        // elimination instead of by asking the user.
-        const auto otherPort = (step.cpu == TargetCpu::Main) ? identity.displayPort
-                                                             : identity.mainPort;
-
-        const VolumeState state = classifyVolumes(volumes, /*weTouched=*/false,
-                                                  expectedFromPriorErase, identity, step.cpu);
-        const GuardAction action = decideAction(state, port.has_value(),
-                                                otherPort.has_value());
+        auto identity = io.identify();
+        auto port = portForCpu(identity, step.cpu);
+        VolumeState state = classifyVolumes(volumes, /*weTouched=*/false,
+                                            expectedFromPriorErase, identity, step.cpu);
+        GuardAction action = decideAction(state, port.has_value(),
+                                          portForCpu(identity, otherCpu(step.cpu)).has_value());
+        {
+            const auto isRefusal = [](GuardAction a) {
+                return a == GuardAction::RefuseUnidentified || a == GuardAction::RefuseWrongCpu
+                    || a == GuardAction::RefuseAmbiguous;
+            };
+            const WaitReporter waiting{ progress, FlashPhase::WaitingForCpu, i, n, step.cpu,
+                                        std::string("waiting for the ") + cpu +
+                                        " CPU to become reachable" };
+            bool announced = false;
+            int waited = 0;
+            while (isRefusal(action) && waited < kIdentifyWaitMs) {
+                if (!announced) { waiting.announce(); announced = true; }
+                if (!io.waitTick(kVolumePollMs))
+                    return failStep(FlashOutcome::Aborted, "cancelled.", i);
+                waited += kVolumePollMs;
+                waiting.refresh(waited);
+                volumes  = io.findVolumes();
+                identity = io.identify();
+                port     = portForCpu(identity, step.cpu);
+                state    = classifyVolumes(volumes, /*weTouched=*/false,
+                                           expectedFromPriorErase, identity, step.cpu);
+                action   = decideAction(state, port.has_value(),
+                                        portForCpu(identity, otherCpu(step.cpu)).has_value());
+            }
+        }
 
         // The one drive this step will write to, established by whichever arm
         // of the switch below runs. Every arm must set it, and nothing after
@@ -472,9 +530,11 @@ FlashResult runFlashPlan(const FlashIo& io,
             // SUCCESSFUL step 0, and completedStepsNote() spells out what that
             // means. See its comment.
             return failStep(FlashOutcome::RefusedUnidentified,
-                            std::string("the ") + cpu + " CPU could not be identified, so "
-                            "this step wrote nothing. See the Recovery tab, or put that "
-                            "CPU into BOOTSEL by hand and try again.", i);
+                            std::string("the ") + cpu + " CPU could not be identified -- no "
+                            "serial port to reboot and no RPI-RP2 drive of its own, for " +
+                            std::to_string(kIdentifyWaitMs / 1000) + " seconds -- so this step "
+                            "wrote nothing. See the Recovery tab, or put that CPU into BOOTSEL "
+                            "by hand and try again.", i);
 
         case GuardAction::RefuseWrongCpu: {
             const char* mine = cpuName(step.cpu);
@@ -592,7 +652,7 @@ FlashResult runFlashPlan(const FlashIo& io,
             // iteration: the erased CPU re-enumerates on its own and may well
             // have beaten us here, in which case it is already in `volumes` and
             // a delta taken from there would see no arrival at all.
-            const auto arrived = waitForNewVolume(io, priorReleaseVolumes, waiting);
+            const auto arrived = waitForNewVolume(io, priorReleaseVolumes, step.cpu, waiting);
             switch (arrived.outcome) {
             case WaitOutcome::Ready:
                 targetVolume = arrived.volume;
@@ -629,7 +689,7 @@ FlashResult runFlashPlan(const FlashIo& io,
             // in, silently, for the full thirty seconds before failing.
             const WaitReporter waiting{ progress, FlashPhase::WaitingForVolume, i, n,
                                         step.cpu, "waiting for the RPI-RP2 volume" };
-            const auto arrived = waitForNewVolume(io, before, waiting);
+            const auto arrived = waitForNewVolume(io, before, step.cpu, waiting);
             switch (arrived.outcome) {
             case WaitOutcome::Ready:
                 targetVolume = arrived.volume;

@@ -16,6 +16,45 @@ bool serialIsUnidentified(std::string_view serial)
     return serial.empty() || serial == "Unknown";
 }
 
+BoardFingerprint fingerprintOf(std::string_view serial, const CpuIdentity& identity)
+{
+    BoardFingerprint fp;
+    if (!serialIsUnidentified(serial)) fp.serial = std::string(serial);
+    fp.mainChip    = identity.mainChipSerial;
+    fp.displayChip = identity.displayChipSerial;
+    return fp;
+}
+
+BoardFingerprint fingerprintOf(const DeviceView& device)
+{
+    return fingerprintOf(device.serial, device.identity);
+}
+
+bool fingerprintsContradict(const BoardFingerprint& a, const BoardFingerprint& b)
+{
+    const auto differ = [](const std::string& x, const std::string& y) {
+        return !x.empty() && !y.empty() && x != y;
+    };
+    return differ(a.serial, b.serial) || differ(a.mainChip, b.mainChip)
+        || differ(a.displayChip, b.displayChip);
+}
+
+BoardFingerprint adoptKnown(BoardFingerprint stored, const BoardFingerprint& seen)
+{
+    if (stored.serial.empty())      stored.serial      = seen.serial;
+    if (stored.mainChip.empty())    stored.mainChip    = seen.mainChip;
+    if (stored.displayChip.empty()) stored.displayChip = seen.displayChip;
+    return stored;
+}
+
+std::string describeFingerprint(const BoardFingerprint& fp)
+{
+    if (!fp.serial.empty())      return "serial " + fp.serial;
+    if (!fp.mainChip.empty())    return "MAIN chip " + fp.mainChip;
+    if (!fp.displayChip.empty()) return "DISPLAY chip " + fp.displayChip;
+    return "unidentified";
+}
+
 namespace {
 
 // "not identified" / "by hub position" / "by USB product name" / "by CPU
@@ -143,65 +182,55 @@ void DeviceModel::refresh()
     // temporarily-absent explicit selection is never disturbed by it -- see
     // the header comment on refresh() for the precise rules.
     if (m_devices.size() == 1) {
+        // An auto-selection whose one board now CONTRADICTS what was recorded
+        // is dropped here and re-made just below. Only a swap can produce a
+        // contradiction, and with a single board there is no choice to
+        // protect: the board in front of the user is the one they want. This
+        // is also what stops an identifier that turns out not to be as stable
+        // as believed from stranding the app the way a latched "Unknown"
+        // serial once did (see the adoption comment below) -- a flash in
+        // progress is guarded by FlashDialog's own gate, not by this.
+        if (m_selectedId && m_selectionIsAuto
+            && m_devices.front().uniqueID == *m_selectedId
+            && fingerprintsContradict(fingerprintOf(m_devices.front()), m_selectedPrint)) {
+            m_selectedId.reset();
+            m_selectedPrint = {};
+        }
         if (!m_selectedId) {
             m_selectedId = m_devices.front().uniqueID;
-            m_selectedSerial = m_devices.front().serial;
+            m_selectedPrint = fingerprintOf(m_devices.front());
             m_selectionIsAuto = true;
         }
     } else if (m_devices.size() >= 2) {
         if (m_selectionIsAuto) {
             m_selectedId.reset();
-            m_selectedSerial.clear();
+            m_selectedPrint = {};
             m_selectionIsAuto = false;
         }
     }
 
-    // FIRST identification, not a CHANGE of identity -- and that distinction is
-    // the whole of why this is not a hole in the substitution guard above.
+    // LEARNING, not a CHANGE of identity -- and that distinction is the whole
+    // of why this is not a hole in the substitution guard above.
     //
-    // The problem it fixes: fwfinder emits the literal "Unknown" as a FreeWili
-    // board's serial whenever it cannot find the board's FTDI child device
-    // (see serialIsUnidentified()), a TRANSIENT state this hardware really
-    // does pass through. If a selection is recorded during that window --
-    // auto-select above, or an explicit select() -- m_selectedSerial is
-    // latched to a string that identifies nothing. Nothing else in this class
-    // ever wrote m_selectedSerial again, so when the real serial arrived a
-    // moment later selected() compared "FW6548" against "Unknown", found a
-    // mismatch, and refused FOREVER: a healthy board that could only be
-    // flashed by restarting the app.
+    // A FreeWili OG's FTDI serial is missing whenever the board runs OG
+    // firmware, and both chip ids are missing while both CPUs sit in the
+    // bootrom, so a selection is routinely recorded with a fingerprint that
+    // knows nothing, or only part of what it could. Nothing else in this class
+    // ever writes m_selectedPrint again, so without this a board that later
+    // reveals an identifier could never be held to it -- and, in the older
+    // serial-only version of this code, a fingerprint latched to a transient
+    // "Unknown" was compared against the real serial forever after and refused
+    // for the life of the process.
     //
-    // Why adopting is safe. The serial comparison in selected() exists to
-    // catch BOARD SUBSTITUTION -- uniqueID is topological (see
-    // DeviceView::uniqueID), so board B plugged into board A's port comes back
-    // with A's uniqueID and the serial is the only thing that can tell them
-    // apart. That guard protects a CONFIRMED identity. An unidentified stored
-    // serial is not a confirmed identity: it is the absence of one. There is
-    // no fact here being overwritten, no earlier answer being contradicted --
-    // the app is learning, for the first time, which board is on that port.
-    // It is exactly the state the user would reach by clicking the row again,
-    // or by restarting the app, so refusing it protects nothing and only
-    // strands them.
-    //
-    // What it does NOT do: once a real serial is pinned here, this branch can
-    // never fire again for that selection (the guard is on the STORED serial),
-    // so every subsequent serial change is a plain mismatch and stays refused
-    // by selected(). Adoption is a one-way door out of "unknown", never a way
-    // back into it -- and the device's own serial must be identified too, so a
-    // board that keeps saying "Unknown" pins nothing and keeps being refused.
-    //
-    // Applied to explicit selections as well as auto ones, deliberately: a
-    // click made while the row read "Unknown" confirmed no identity either, and
-    // the flash path does not care which way the selection was made. Any
-    // substitution that happened entirely inside the unidentified window is
-    // undetectable from this data whether we adopt or not -- there is nothing
-    // to compare against -- and is caught downstream anyway, where FlashDialog
-    // re-captures the (now real) serial at open() and selectionUnchangedFresh()
-    // requires it to still match, against a snapshot no more than
-    // kMaxSnapshotAgeForFlash old, before Proceed does anything.
-    if (m_selectedId && serialIsUnidentified(m_selectedSerial)) {
+    // adoptKnown() fills only EMPTY fields. It never overwrites a known one, so
+    // an identifier once pinned can only be contradicted, never replaced --
+    // that is what keeps the check meaningful. Applied to explicit selections
+    // as well as auto ones: a click made while the board said nothing about
+    // itself confirmed no identity either.
+    if (m_selectedId) {
         for (const auto& d : m_devices) {
-            if (d.uniqueID == *m_selectedId && !serialIsUnidentified(d.serial)) {
-                m_selectedSerial = d.serial;
+            if (d.uniqueID == *m_selectedId) {
+                m_selectedPrint = adoptKnown(std::move(m_selectedPrint), fingerprintOf(d));
                 break;
             }
         }
@@ -249,13 +278,11 @@ std::optional<DeviceView> DeviceModel::selected() const
     // uniqueID alone identifies a USB port, not a board (see
     // DeviceView::uniqueID's comment): a different physical device can land
     // on the very port the selected one vacated and come back with the SAME
-    // uniqueID. Require the serial recorded at selection time to still
-    // match before treating this as a hit -- a serial that carries no
-    // identifying information (empty, or fwfinder's own "Unknown" sentinel
-    // -- see serialIsUnidentified()) on either side is never a match; a
-    // device that will not say what it is does not get silently reported as
-    // the still-selected one.
-    if (serialIsUnidentified(byId->serial) || serialIsUnidentified(m_selectedSerial) || byId->serial != m_selectedSerial)
+    // uniqueID. Refuse when the device there now positively contradicts the
+    // fingerprint recorded at selection time. A board that reveals nothing
+    // about itself is not refused -- see BoardFingerprint for why that is the
+    // right answer and not a weakening.
+    if (fingerprintsContradict(fingerprintOf(*byId), m_selectedPrint))
         return std::nullopt;
     return byId;
 }
@@ -263,11 +290,11 @@ std::optional<DeviceView> DeviceModel::selected() const
 void DeviceModel::select(size_t index)
 {
     if (index < m_devices.size()) {
-        m_selectedId     = m_devices[index].uniqueID;
-        m_selectedSerial = m_devices[index].serial;
+        m_selectedId    = m_devices[index].uniqueID;
+        m_selectedPrint = fingerprintOf(m_devices[index]);
     } else {
         m_selectedId = std::nullopt;
-        m_selectedSerial.clear();
+        m_selectedPrint = {};
     }
     // Always explicit -- see the header comment on why this matters even
     // when index happens to name the device auto-select would have picked.

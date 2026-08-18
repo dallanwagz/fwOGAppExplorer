@@ -20,7 +20,7 @@ running the app and **a display that never comes up**.
 
 It is a one-time, per-board install, and this app does it for you:
 
-> **Default Firmware tab → "FreeWili 1-OG Display Bootloader"**
+> **OG Bootloader Installer tab → "Install FreeWili OG Bootloader"**
 
 Do that once. After that, every OG app is a single file and a single click.
 
@@ -41,24 +41,42 @@ refusal would be worse than a false warning.
 
 ## Download
 
-**[Download FwOGExplorerV1.zip →](https://github.com/freewili/fwOGAppExplorer/releases/latest)**
+**[Download FwOGExplorerV2.zip →](https://github.com/freewili/fwOGAppExplorer/releases/latest)**
 
 Windows x64. Unzip and run `fwOGExp.exe` — one statically linked executable with
 the firmware images baked in, so there is nothing to install and no
-redistributable to chase. The `catalog/` folder beside it holds a few sample app
-UF2s; the App Explorer tab picks up anything dropped in there.
+redistributable to chase. `fwogcli.exe` ships beside it and drives the same
+flash engine from a terminal.
+
+The `catalog/` folder holds nothing but a note explaining itself, and that is
+the v2 change worth knowing: the app now fetches the published FreeWili catalog
+on first launch, so the apps are there without anything being bundled. Drop a
+`.uf2` into `catalog/` and the App Explorer tab lists it alongside them.
 
 **Linux** works and has flashed a real board, but there is no prebuilt download
 — build it from source, and read [Linux](#linux) first: it needs a few
 development packages, it has one shared-library dependency Windows does not, and
 serial-port permissions usually need a one-time setup step.
 
+## What is new in v2
+
+| | |
+|---|---|
+| **A catalog that fills itself in** | A fresh install fetches `https://docs.freewili.com/og-apps/apps.json` with no configuration — apps arrive without a bundled `catalog/`. Settings can point it elsewhere or clear it. See [The app catalog](#the-app-catalog). |
+| **Flashing from any board state** | Both CPUs running, either or both in `RPI-RP2`, a blank CPU, the display on its bootloader alone, the original firmware installed — every state was exercised on hardware rather than assumed. |
+| **`fwogcli` is a full front-end** | The same engine as the GUI: `list`, `flash`, `install`, `entries`, `info`, `bootsel`, with board selection and real exit codes. See [Command line](#command-line). |
+| **The second tab says what it installs** | It is the **OG Bootloader Installer** now, not a generic firmware tab, because installing the display bootloader is the thing a new board needs first. |
+| **The old FreeWili 1 firmware is named as deprecated** | Restoring it removes the display bootloader, so it sits at the bottom of the Danger zone under a name that says so. |
+
+Publishing to the catalog is [its own section](#publishing-to-it); the tooling
+that builds it ships in `tools/build_catalog.py`.
+
 ## What it does
 
 | Tab | Purpose |
 |---|---|
 | **App Explorer** | **The main event: load OG apps.** Browse the catalog — embedded, a local `catalog/` folder, or a remote `apps.json` URL — and flash any app in one click. Requires the display bootloader (above). |
-| **Default Firmware** | **Install the OG display bootloader here first.** Also restores the original (deprecated) FreeWili 1 firmware, or erases either CPU. |
+| **OG Bootloader Installer** | **Install the OG display bootloader here first.** Its Danger zone also erases either CPU, or restores the deprecated OLD FreeWili 1 firmware. |
 | **Recovery** | Documentation for getting a board back when it will not enumerate. |
 | **Settings** | Theme, remote catalog URL, window state. |
 
@@ -80,6 +98,36 @@ The parts that make it more than a file copier:
   description and build identity, so dropping an unknown `.uf2` into `catalog/`
   shows you what it is and what it will do to both CPUs — with nothing
   downloaded and no catalog entry written. See below.
+- **It flashes from whatever state the board is in.** Both CPUs running, either
+  or both sitting in `RPI-RP2` (by button, by an earlier flash, or because a CPU
+  is blank), the display running only its bootloader, the original firmware
+  installed — every state was exercised on hardware. Each CPU is written by its
+  position on the board's own USB hub, the board is re-identified live at every
+  step of a plan, and a CPU that is mid-reboot is waited for rather than
+  refused. Before a MAIN install the DISPLAY is parked in BOOTSEL so a running
+  display app cannot disturb the write; the new MAIN firmware brings it back.
+- **The board does not need a serial number.** A FreeWili OG under OG firmware
+  never enumerates its FTDI, so its serial reads `Unknown` for life; the app
+  tells boards apart by the RP2040 chip ids their serial ports report, and only
+  refuses when a board *contradicts* the one it was working with.
+
+## Command line
+
+`fwogcli.exe` sits beside the GUI and drives the identical flash engine:
+
+```
+fwogcli list                                  every connected board and its CPUs
+fwogcli flash <file.uf2> [--cpu main|display] flash a UF2 (default: MAIN)
+fwogcli install <slug>                        an embedded entry's plan (see `entries`)
+fwogcli entries                               the embedded entries and their plans
+fwogcli info <file.uf2>                       what a UF2 says about itself
+fwogcli bootsel main|display                  reboot a running CPU into BOOTSEL
+   --device <n|serial|chip>  pick a board when several are connected
+   --keep-display            do not park the DISPLAY before a MAIN install
+   --yes                     confirm a drive the engine cannot place by hub port
+```
+
+Exit codes: 0 ok, 1 flash failed, 2 usage/selection, 3 needs `--yes`.
 
 ## The FwOGapp Contract
 
@@ -121,6 +169,59 @@ One caveat worth stating plainly: the record layout this app parses was
 [`src/catalog/fwOgAppInfo.h`](src/catalog/fwOgAppInfo.h), which documents the
 offsets and the evidence). Every field is bounds-checked and a record that does
 not fit is rejected rather than read past.
+
+## The app catalog
+
+App Explorer merges three sources into one list:
+
+| source | where it comes from |
+|---|---|
+| **Embedded** | compiled into the executable — the display bootloader, the erase actions, the deprecated original firmware |
+| **Local** | any `.uf2` dropped in the `catalog/` folder beside the executable, plus an optional `catalog.json` describing them |
+| **Remote** | an `apps.json` fetched over HTTPS |
+
+The remote catalog ships pointed at the published FreeWili one:
+
+```
+https://docs.freewili.com/og-apps/apps.json
+```
+
+A fresh install fetches it at startup with no configuration; the Settings tab
+can point it somewhere else, or clear it to stop fetching. Clearing it sticks —
+the default is seeded once, not re-applied on every launch — and **Use the
+FreeWili catalog** puts it back.
+
+Only `https://` is accepted, and a redirect from `https://` down to `http://`
+is refused. This is not general caution: a catalog entry is authoritative over
+which of the board's two CPUs each image is written to, and a main-CPU image
+written to the DISPLAY CPU drives GPIO 29 against the PDM microphone's own
+output. Nothing downstream can catch a rewritten catalog — `sha256` is
+self-attested by the same document, and a UF2 header cannot distinguish a MAIN
+image from a DISPLAY one.
+
+A failed fetch is a status line and never a modal, and never clears entries the
+app already had: an offline launch shows the previous catalog from
+`apps-cache.json`.
+
+### Publishing to it
+
+`publish/` holds the authored input and `tools/build_catalog.py` builds the
+tree that gets uploaded:
+
+```powershell
+python tools/build_catalog.py     # -> publish/out/og-apps/{apps.json, uf2/*.uf2}
+```
+
+Almost nothing in the published `apps.json` is written by hand. Every OG main
+image carries `fwog_uf2_info_t` records (the FwOGapp Contract, above), so the
+tool reads each app's name, description, version and build identity straight
+out of the bytes it is publishing, then computes `sha256` and `size` from them.
+`publish/sources.json` carries only what an image cannot know about itself:
+which apps to publish, and their category, author, repository and tags.
+
+Copy `publish/out/og-apps/` into the documentation site's `static/` and deploy.
+Full procedure, including what the server has to get right, in
+[`publish/README.md`](publish/README.md).
 
 ## Firmware for the board itself
 
@@ -365,37 +466,42 @@ that are actually mounted.
 There is no installer and no system install, deliberately: the app looks for its
 catalog at `catalog/` **beside the executable** (`catalogDir()` is
 `exeDir()/catalog`), so it is a portable directory rather than something that
-belongs in `/usr/bin`. The Linux equivalent of the Windows `FwOGExplorerV1.zip`
+belongs in `/usr/bin`. The Linux equivalent of the Windows `FwOGExplorerV2.zip`
 is the same layout in a tarball:
 
 ```
-FwOGExplorerV1-linux-x86_64/
+FwOGExplorerV2-linux-x86_64/
 ├── fwOGAppExplorer
-├── catalog/                        # sample app UF2s; the tab picks up anything here
+├── fwogcli
+├── catalog/                        # empty; the tab picks up any .uf2 dropped here
 ├── 60-fwog-app-explorer.rules      # optional, see Device permissions
 ├── fwOGAppExplorer.desktop         # optional, see The .desktop file
 └── fwOGAppExplorer.png             # the icon that .desktop names
 ```
 
 ```sh
-mkdir -p FwOGExplorerV1-linux-x86_64/catalog
-cp build/linux-gcc-release/fwOGAppExplorer packaging/* FwOGExplorerV1-linux-x86_64/
-tar czf FwOGExplorerV1-linux-x86_64.tar.gz FwOGExplorerV1-linux-x86_64
+mkdir -p FwOGExplorerV2-linux-x86_64/catalog
+cp build/linux-gcc-release/fwOGAppExplorer build/linux-gcc-release/fwogcli \
+   packaging/* FwOGExplorerV2-linux-x86_64/
+tar czf FwOGExplorerV2-linux-x86_64.tar.gz FwOGExplorerV2-linux-x86_64
 ```
 
 The three `packaging/` files are all optional at run time. They travel in the
 tarball so that somebody who downloads only the tarball already has everything
 that "Device permissions" above and "The `.desktop` file" below tell them to
-install. `catalog/` is the only part that has to be filled in by hand.
+install. `catalog/` ships empty on both platforms as of v2 — the remote catalog
+is what fills the list on first launch, so nothing has to be bundled and the
+same app no longer appears twice once the fetch lands.
 
-**The build does not produce this, on purpose.** A `cmake --install` or CPack
-target could assemble everything except the one thing that makes it a release:
-the sample UF2s in `catalog/` are excluded from git (`.gitignore` has
-`catalog/*.uf2`, for the same reason `firmware/*.uf2` is excluded), so a
-packaging target would still need the same manual step and would only look like
-it had automated it. The Windows zip is assembled by hand for the same reason,
-and one platform quietly acquiring a different release process is how the two
-stop matching.
+**The build still does not produce this**, and since v2 that is only because
+nothing has automated it — not because it cannot be. The old reason was that
+`catalog/*.uf2` is excluded from git (for the same reason `firmware/*.uf2` is),
+so any packaging target would still have needed a manual copy and would only
+have looked like it had automated it. With an empty `catalog/` that argument is
+gone: the layout above is the build output plus `packaging/` plus one `mkdir`.
+The Windows zip is assembled by the same three steps by hand, and if one
+platform ever gets a packaging target the other should get it in the same
+change — two release processes that drift is how the two stop matching.
 
 ### The `.desktop` file
 
@@ -451,8 +557,10 @@ install**; and the `LegacyDirect` restore. Timings and serial numbers are in
 ## Hardware verification status
 
 [`docs/hardware-verification.md`](docs/hardware-verification.md) records exactly
-what has been confirmed against a physical board and what has not. Read it before
-trusting a flash path you have not exercised yourself.
+what has been confirmed against a physical board and what has not. As of the
+2026-08-18 pass every flash path — OG app, display bootloader, the original
+firmware and back, both erase actions — has been run on hardware from every board
+state listed there, through both the GUI and `fwogcli`.
 
 ## License
 

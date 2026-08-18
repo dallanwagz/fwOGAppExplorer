@@ -325,7 +325,7 @@ std::vector<std::string> planWarnings(const CatalogEntry& entry, const CpuIdenti
     if (entry.slug == kEraseMainCpuSlug) {
         return { "This destroys the MAIN CPU's firmware entirely. It cannot be undone "
                  "from this app -- reflash the MAIN CPU afterward from App Explorer or "
-                 "the Default Firmware tab." };
+                 "the OG Bootloader Installer tab." };
     }
     // Same shape and the same reason as the erase-MAIN branch above:
     // FlashScheme::DisplayBootloader's own answer below is an empty warning

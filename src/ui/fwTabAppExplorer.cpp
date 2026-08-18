@@ -515,7 +515,7 @@ void drawDetail(const CatalogEntry& entry, DeviceModel& deviceModel, FlashDialog
         // decision for the user; see AppExplorerTab::PendingFlash.
         startError.clear();
         pending = AppExplorerTab::PendingFlash{ *planEntry, selectedDevice->uniqueID,
-                                                selectedDevice->serial, 0 };
+                                                fingerprintOf(*selectedDevice), 0 };
     }
     ImGui::EndDisabled();
 
@@ -541,7 +541,12 @@ void drawDetail(const CatalogEntry& entry, DeviceModel& deviceModel, FlashDialog
         ImGui::TextColored(kMutedColor, "checking the board...");
     }
 
-    if (!reason.empty()) {
+    // Not while a flash is running: the reason is computed against the board
+    // AS IT IS THIS FRAME, and mid-flash the board is deliberately in states
+    // (DISPLAY parked in BOOTSEL, MAIN mid-reboot) that read as refusals for a
+    // flash that has not started -- which this one has. A red "the one drive
+    // mounted is the DISPLAY CPU" beside a bar at 45% is not information.
+    if (!reason.empty() && !flashBusy) {
         ImGui::SameLine();
         // wrappedColored, not TextColored: Task 21's platform notice is a
         // full sentence, far longer than any of the pre-existing reasons,
@@ -549,6 +554,13 @@ void drawDetail(const CatalogEntry& entry, DeviceModel& deviceModel, FlashDialog
         // of unbounded text applies to it -- a line that overflows the
         // pane's right edge silently hides whatever ran off it.
         wrappedColored(kErrorColor, reason);
+    }
+
+    // The one-click flash finished. No modal (see FlashDialog::draw()), so say
+    // it here, where the click was.
+    if (flashDialog.inlineSucceeded()) {
+        ImGui::SameLine();
+        ImGui::TextColored(kOkColor, ICON_MD_CHECK_CIRCLE " Flashed. The board is rebooting into it.");
     }
 
     // The phase readout goes UNDER the bar rather than beside it: it is a full
@@ -649,7 +661,7 @@ void AppExplorerTab::servicePendingFlash(DeviceModel& deviceModel, FlashDialog& 
 
     const std::optional<DeviceView> current = deviceModel.selected();
     const SelectionCheck check = selectionUnchangedFresh(current, m_pendingFlash->uniqueID,
-                                                         m_pendingFlash->serial,
+                                                         m_pendingFlash->print,
                                                          deviceModel.snapshotAge());
     if (check == SelectionCheck::Unchanged && current.has_value()) {
         // Started against the device as re-read THIS frame, never against the

@@ -23,13 +23,29 @@ namespace fwog {
 /// loader that dispatches on which ImageRef field is set (embedded id ->
 /// loadEmbeddedImage, localPath -> a plain file read, url -> httpGet).
 ///
-/// `identify` always returns `identity` -- the SAME value for every step of
-/// the run, captured once and never re-queried. This is deliberate: the
-/// FlashIo this returns is handed to a worker thread, and DeviceModel is not
-/// thread-safe -- it is rebuilt once per frame by the UI thread alone, so a
-/// worker must never call into it. `identity` must therefore already be a
-/// snapshot (e.g. DeviceModel::selected()->identity, copied out by the
-/// caller) by the time it reaches here.
+/// `identify` is LIVE when `uniqueID` is non-zero: every call is a fresh
+/// identifyBoardNow(uniqueID) (fwBoardIdentify.h) -- one Fw::find_all() round
+/// trip for the board at that hub position -- with `identity` serving as the
+/// starting point and as the answer whenever the board cannot be found for a
+/// moment (mid-re-enumeration). The verified-probe volumes of `identity`, if
+/// any, are carried onto every live answer (withProbeVolumesFrom()).
+///
+/// Live rather than a snapshot because a plan CHANGES the board as it runs.
+/// The step that erased MAIN leaves a MAIN drive where a MAIN port used to be;
+/// the DISPLAY bootloader's console appears ten seconds after MAIN goes quiet;
+/// the preparation that quiets DISPLAY (fwFlashPrep.h) turns its port into a
+/// drive. A snapshot taken before any of that names ports that no longer
+/// exist and misses drives that now do -- and in one real shape (bootloader
+/// install: ERASE MAIN, then WRITE DISPLAY with no display port in the
+/// snapshot) it left the engine unable to tell that the one mounted drive
+/// was MAIN's, and asking the user to type DISPLAY over it. The live answer
+/// knows the drive is at MAIN's hub port and refuses.
+///
+/// It does NOT read DeviceModel, which is not thread-safe and belongs to the
+/// UI thread; identifyBoardNow() goes to fwfinder directly.
+///
+/// With `uniqueID == 0` (tests, and callers with no board handle) `identify`
+/// returns `identity` unchanged every time, as it always did.
 ///
 /// `waitTick` sleeps for the requested interval and always returns true (no
 /// cancellation support). FlashController replaces it with a
@@ -37,27 +53,19 @@ namespace fwog {
 /// FlashIo -- see startWorker() in the .cpp. A caller that uses this
 /// function directly, without going through FlashController, gets a FlashIo
 /// with no way to cancel an in-progress wait.
-FlashIo makeProductionFlashIo(const CpuIdentity& identity);
+FlashIo makeProductionFlashIo(const CpuIdentity& identity, uint64_t uniqueID = 0);
 
 /// Result of comparing the device selected THIS frame against the one a
 /// FlashDialog captured when it opened. See selectionUnchanged().
 enum class SelectionCheck {
-    Unchanged,       ///< same uniqueID AND the same non-empty serial -- safe to proceed
+    Unchanged,       ///< same uniqueID, and nothing the board says about itself
+                     ///< contradicts what was recorded -- safe to proceed
     NothingSelected, ///< no device is selected any more
-    DifferentBoard,  ///< uniqueID (USB port) matches and BOTH serials identify a
-                     ///< board, but they are not the same one -- a DIFFERENT
-                     ///< physical board now occupies the port the dialog opened
-                     ///< on. A positive statement that a swap happened
-    UnidentifiedSerial, ///< uniqueID (USB port) matches, but one side reports no
-                     ///< identifying serial at all (empty, or fwfinder's
-                     ///< "Unknown" sentinel -- see serialIsUnidentified()).
-                     ///< REFUSES exactly like DifferentBoard, and must: it is
-                     ///< indistinguishable from a swap in progress. Split out
-                     ///< only so the message can be honest -- the common cause
-                     ///< is one board mid-re-enumeration, and telling that user
-                     ///< "a different device now occupies this port" states as
-                     ///< fact something nobody knows and sends them hunting for
-                     ///< a board swap that never happened
+    DifferentBoard,  ///< uniqueID (USB port) matches but the board there now
+                     ///< positively contradicts the recorded fingerprint -- an
+                     ///< FTDI serial or an RP2040 chip id both sides know, and
+                     ///< disagree on. A DIFFERENT physical board occupies the
+                     ///< port the dialog opened on
     DifferentPort,   ///< uniqueID no longer matches. Whether or not this is still
                      ///< the same physical board, its COM ports have almost
                      ///< certainly been renumbered by the move -- the identity
@@ -70,8 +78,8 @@ enum class SelectionCheck {
 };
 
 /// Compares `current` (the device selected THIS frame) against the device a
-/// FlashDialog captured at open() time (`openedUniqueID`/`openedSerial`,
-/// from `DeviceView::uniqueID`/`DeviceView::serial`). Returns
+/// FlashDialog captured at open() time (`openedUniqueID` from
+/// `DeviceView::uniqueID`, `opened` from fingerprintOf(DeviceView)). Returns
 /// SelectionCheck::Unchanged only when it is safe to proceed with a flash;
 /// every other value is a refusal reason.
 ///
@@ -79,30 +87,21 @@ enum class SelectionCheck {
 /// Fw::FreeWiliDevice::uniqueID, packed purely from the USB port chain
 /// (`_generateUniqueIDFromUSBPortChain`, fwfinder.cpp) -- it identifies a
 /// SOCKET, not a board. Unplug board A from a port and plug board B into
-/// that same port, and `uniqueID` comes back identical for B: a
-/// uniqueID-only comparison would report "unchanged" and let a flash
-/// proceed against the substituted board while still believing it is
-/// talking to A -- exactly the wrong-CPU write this app exists to prevent.
-/// `serial` (the board's own USB serial string) identifies the physical
-/// unit, so both must match: same uniqueID AND same serial for
-/// SelectionCheck::Unchanged.
+/// that same port, and `uniqueID` comes back identical for B. The board's
+/// FINGERPRINT (BoardFingerprint, fwDeviceModel.h: FTDI serial plus the two
+/// RP2040 chip ids) is what tells physical units apart, and this refuses --
+/// DifferentBoard -- when the board now on the port CONTRADICTS the recorded
+/// fingerprint: some identifier both know, with different values.
 ///
-/// A serial that carries no identifying information -- empty, or fwfinder's
-/// own "Unknown" sentinel (see fwDeviceModel.h's serialIsUnidentified(), which
-/// this delegates to) -- on either side is treated as a MISMATCH
-/// (SelectionCheck::UnidentifiedSerial), never skipped or waved through: a
-/// device that will not say what it is does not get assumed unchanged when the
-/// cost of being wrong is a damaged board. "Unknown" matters here specifically
-/// because it is NOT empty -- fwfinder emits it as a literal string for a
-/// Fw::DeviceType::FreeWili board whose FTDI child device was not found, so
-/// a naive `serial == openedSerial` would treat two different boards that
-/// both degraded to "Unknown" on the same port as the same board.
-///
-/// UnidentifiedSerial rather than DifferentBoard is a WORDING distinction and
-/// nothing else -- both are refusals, and neither is ever a step towards one.
-/// DifferentBoard is now reserved for the case where both serials identify a
-/// board and they differ, which is the only case in which "a different device
-/// occupies this port" is a fact rather than a guess. See the enum comment.
+/// It does NOT refuse a board that says nothing about itself. A FreeWili OG
+/// running OG firmware never enumerates its FTDI, so its serial is fwfinder's
+/// "Unknown" for its whole working life; a board with both CPUs in the
+/// bootrom reports no chip id either. The rule this replaces refused every
+/// such board, which is to say every board this app exists to flash, in the
+/// states it most needs flashing in. What actually prevents a wrong-CPU write
+/// on a swapped board is hub-position identification of the CPUs, which the
+/// engine applies to whatever board is there -- the fingerprint check is a
+/// second line, and a second line that refuses everything protects nothing.
 ///
 /// A caller must re-run this (and re-read a fresh `CpuIdentity` from
 /// `current`) immediately before calling begin(), rather than trusting
@@ -110,7 +109,7 @@ enum class SelectionCheck {
 /// Idle-state handling.
 SelectionCheck selectionUnchanged(const std::optional<DeviceView>& current,
                                    uint64_t openedUniqueID,
-                                   const std::string& openedSerial);
+                                   const BoardFingerprint& opened);
 
 /// The oldest a device snapshot may be for selectionUnchangedFresh() to
 /// approve a flash against it.
@@ -152,7 +151,7 @@ inline constexpr std::chrono::milliseconds kMaxSnapshotAgeForFlash{1500};
 /// damages a board.
 SelectionCheck selectionUnchangedFresh(const std::optional<DeviceView>& current,
                                         uint64_t openedUniqueID,
-                                        const std::string& openedSerial,
+                                        const BoardFingerprint& opened,
                                         std::optional<std::chrono::milliseconds> snapshotAge,
                                         std::chrono::milliseconds maxAge = kMaxSnapshotAgeForFlash);
 
@@ -254,11 +253,25 @@ public:
     /// frames, DeviceModel is rebuilt every one of them, and the worker
     /// thread this spawns must never touch it.
     ///
+    /// `uniqueID` is the board's DeviceView::uniqueID. When non-zero the
+    /// worker re-identifies the board LIVE at every step, by that handle,
+    /// through makeProductionFlashIo(identity, uniqueID) -- see its comment
+    /// for why a snapshot is not enough for a plan that changes the board as
+    /// it runs. `identity` is then the starting point and the fallback for a
+    /// moment when the board cannot be found. Zero (the default, and what the
+    /// tests pass) keeps `identity` fixed for the whole run.
+    ///
+    /// Before step 0 the worker runs quietDisplayBeforeMainWrite()
+    /// (fwFlashPrep.h) against the same FlashIo: for a plan that installs
+    /// MAIN firmware while the DISPLAY is running, the DISPLAY is rebooted
+    /// into BOOTSEL first so the MAIN write is stable. Reported into the log
+    /// as FlashPhase::Preparing.
+    ///
     /// No-op while state() == Running: only one flash may run at a time.
     /// Safe to call from every other state -- Idle, Succeeded,
     /// AwaitingConfirmation or Failed -- each call starts a fresh run from
     /// step 0 and discards whatever the previous one reported.
-    void begin(const CatalogEntry& entry, const CpuIdentity& identity);
+    void begin(const CatalogEntry& entry, const CpuIdentity& identity, uint64_t uniqueID = 0);
 
     /// Supplies the CPU name the user typed and resumes a plan that
     /// stopped at NeedsConfirmation. No-op unless state() ==
@@ -382,7 +395,9 @@ private:
         FlashResult   result;
     };
 
-    void startWorker(std::string typedConfirmation, std::size_t startIndex);
+    /// `prepare` runs quietDisplayBeforeMainWrite() ahead of the plan; true
+    /// from begin(), false from confirm() -- see confirm()'s body for why.
+    void startWorker(std::string typedConfirmation, std::size_t startIndex, bool prepare);
     void enqueueProgress(const FlashProgress& p);
     void enqueueResult(const FlashResult& r);
 
@@ -395,6 +410,7 @@ private:
     float m_progressFraction = 0.0f;
 
     CpuIdentity            m_identity;
+    uint64_t               m_uniqueID = 0;   ///< begin()'s board handle; 0 = static identity
     std::vector<FlashStep> m_plan;   // the ORIGINAL, un-sliced plan -- see confirm()
 
     std::atomic<bool> m_cancelRequested{ false };

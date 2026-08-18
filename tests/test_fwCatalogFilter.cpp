@@ -186,11 +186,11 @@ TEST_CASE("displayRetargetConfirmed requires the exact DISPLAY confirmation") {
 
 // ---------------------------------------------------------------------------
 // flashDisabledReason's identityConfirmed parameter (Task 22): a regression
-// fix. A board whose serial reads fwfinder's "Unknown" sentinel can no
-// longer be returned by DeviceModel::selected(), so a caller that always
-// collapsed "not selected" to `device = nullptr` produced "No FreeWili is
-// connected." even while that board's row was still visible in the device
-// bar -- worse than the refusal it replaced, because it is simply false.
+// fix. A board that DeviceModel::selected() declines to return -- today, one
+// whose fingerprint contradicts the recorded selection (see BoardFingerprint)
+// -- used to be collapsed to `device = nullptr` by callers, producing "No
+// FreeWili is connected." even while that board's row was still visible in the
+// device bar -- worse than the refusal it replaced, because it is simply false.
 // These pin the fix: the message must differ from the true no-device case,
 // name the actual problem, and the refusal itself must still hold (empty
 // string is never returned here).
@@ -277,7 +277,7 @@ TEST_CASE("with device support present the pre-existing ordering is untouched") 
     CHECK(flashDisabledReasonFor(true, withAssets, &notOg).find("not a FreeWili OG") != std::string::npos);
     CHECK(flashDisabledReasonFor(true, noAssets, &og).find("no firmware") != std::string::npos);
     CHECK(flashDisabledReasonFor(true, withAssets, &og, /*identityConfirmed=*/false)
-              .find("could not be confirmed") != std::string::npos);
+              .find("contradicts the selection") != std::string::npos);
     // ...and none of them is ever the platform notice on a capable platform.
     CHECK(flashDisabledReasonFor(true, noAssets, nullptr) != std::string(platformLimitationNotice()));
 }

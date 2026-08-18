@@ -2,6 +2,7 @@
 
 #include "catalog/fwCatalogFilter.h"   // flashDisabledReason
 #include "flash/fwFlashPlan.h"
+#include "flash/fwFlashPrep.h"   // planWritesMainFirmware
 #include "flash/fwVolumeState.h"       // confirmationMatches
 
 #include <imgui.h>
@@ -38,7 +39,8 @@ void FlashDialog::open(const CatalogEntry& entry, const DeviceView& device)
 
     m_entry          = entry;
     m_openedUniqueID = device.uniqueID;
-    m_openedSerial   = device.serial;
+    m_openedPrint    = fingerprintOf(device);
+    m_printCapturedForPause = false;
     // Seeded from the device this was opened on, then RE-DERIVED every Idle
     // frame in draw() from a freshly re-read identity -- see the Idle branch.
     // A plan and its warnings are a promise about what the button will do, and
@@ -66,7 +68,8 @@ void FlashDialog::beginImmediate(const CatalogEntry& entry, const DeviceView& de
 
     m_entry          = entry;
     m_openedUniqueID = device.uniqueID;
-    m_openedSerial   = device.serial;
+    m_openedPrint    = fingerprintOf(device);
+    m_printCapturedForPause = false;
     m_confirmBuf[0]  = '\0';
 
     // Built for the same reason open() builds it: if this run stops on a typed
@@ -80,8 +83,10 @@ void FlashDialog::beginImmediate(const CatalogEntry& entry, const DeviceView& de
     m_startedAt = std::chrono::steady_clock::now();
     // The identity is used exactly as read this frame by the caller. See the
     // header: a single click has no pause in which the board could be swapped,
-    // which is what lets this start without a second confirmation.
-    m_controller.begin(entry, device.identity);
+    // which is what lets this start without a second confirmation. The
+    // uniqueID is what lets the worker re-identify the board LIVE as the plan
+    // changes it -- see makeProductionFlashIo().
+    m_controller.begin(entry, device.identity, device.uniqueID);
 }
 
 bool FlashDialog::isInlineBusy() const
@@ -89,6 +94,11 @@ bool FlashDialog::isInlineBusy() const
     if (!m_inlineRun) return false;
     const FlashState s = m_controller.state();
     return s == FlashState::Running || s == FlashState::AwaitingConfirmation;
+}
+
+bool FlashDialog::inlineSucceeded() const
+{
+    return m_inlineRun && !m_open && m_controller.state() == FlashState::Succeeded;
 }
 
 float FlashDialog::progressFraction() const
@@ -184,6 +194,13 @@ void FlashDialog::refreshPlan(const CpuIdentity& identity)
     m_droppedNote   = droppedEraseNote(full, identity);
     m_plan          = dropRedundantErases(full, identity);
     m_warnings      = planWarnings(m_entry, identity);
+    // The preparation FlashController runs ahead of step 0 -- not a step, so
+    // not in the numbered list, but the user is about to consent to a plan and
+    // must not see the DISPLAY reboot as something unasked-for.
+    m_prepNote = (planWritesMainFirmware(m_plan) && identity.displayPort && !identity.displayVolume)
+        ? "First, the DISPLAY CPU is rebooted into BOOTSEL (its running app would otherwise "
+          "disturb the MAIN write); the new MAIN firmware brings it back."
+        : std::string{};
 }
 
 void FlashDialog::close()
@@ -286,6 +303,12 @@ void FlashDialog::draw(DeviceModel& deviceModel, const std::function<void(Recove
             const auto& step = m_plan[i];
             ImGui::BulletText("%zu. %s -> %s", i + 1, cpuLabel(step.cpu), step.description.c_str());
         }
+    }
+
+    if (!m_prepNote.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, kMutedColor);
+        ImGui::TextWrapped(ICON_MD_INFO " %s", m_prepNote.c_str());
+        ImGui::PopStyleColor();
     }
 
     // A plan that is visibly shorter than the documentation describes must say
@@ -485,8 +508,19 @@ void FlashDialog::draw(DeviceModel& deviceModel, const std::function<void(Recove
         // possible. The age check refuses instead, and the requestRescan()
         // above is what keeps that refusal from being the normal case.
         const std::optional<DeviceView> currentDevice = deviceModel.selectedByIdOnly();
+        // Re-capture the fingerprint ONCE, on the first frame of the pause: the
+        // steps that already ran may have rewritten a CPU (its chip id does not
+        // change, but its port -- and so which ids are visible -- does), and
+        // what the resume gate must detect is a swap DURING the pause, measured
+        // from where the pause began. Learning here fills only what the opened
+        // fingerprint did not know; nothing already pinned is replaced.
+        if (!m_printCapturedForPause && currentDevice.has_value()
+            && currentDevice->uniqueID == m_openedUniqueID) {
+            m_openedPrint = adoptKnown(m_openedPrint, fingerprintOf(*currentDevice));
+            m_printCapturedForPause = true;
+        }
         const SelectionCheck check = selectionUnchangedFresh(currentDevice, m_openedUniqueID,
-                                                             m_openedSerial, deviceModel.snapshotAge());
+                                                             m_openedPrint, deviceModel.snapshotAge());
         const std::string reason = (check == SelectionCheck::Unchanged)
                                      ? std::string{}
                                      : selectionCheckMessage(check);
@@ -593,7 +627,7 @@ void FlashDialog::draw(DeviceModel& deviceModel, const std::function<void(Recove
         const std::optional<DeviceView> currentDevice = deviceModel.selectedByIdOnly();
         std::string reason;
         const SelectionCheck check = selectionUnchangedFresh(currentDevice, m_openedUniqueID,
-                                                             m_openedSerial, deviceModel.snapshotAge());
+                                                             m_openedPrint, deviceModel.snapshotAge());
         if (check != SelectionCheck::Unchanged)
             reason = selectionCheckMessage(check);
         else
@@ -614,7 +648,10 @@ void FlashDialog::draw(DeviceModel& deviceModel, const std::function<void(Recove
         // `currentDevice` even when nothing was selected.
         if (ImGui::Button(ICON_MD_BOLT " Start Flashing") && currentDevice.has_value()) {
             m_startedAt = std::chrono::steady_clock::now();
-            m_controller.begin(m_entry, currentDevice->identity);   // freshly re-read, not open()'s snapshot
+            m_printCapturedForPause = false;
+            // Freshly re-read, not open()'s snapshot; the uniqueID lets the
+            // worker keep re-reading it live -- see makeProductionFlashIo().
+            m_controller.begin(m_entry, currentDevice->identity, currentDevice->uniqueID);
         }
         ImGui::EndDisabled();
         ImGui::SameLine();

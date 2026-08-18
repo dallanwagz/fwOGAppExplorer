@@ -49,7 +49,7 @@ namespace {
 // Declared up here rather than beside the tab-bar loop because loadSettings()
 // clamps a restored lastTab against kTabCount, and that runs long before the
 // loop does.
-constexpr const char* kTabLabels[] = { "App Explorer", "Default Firmware", "Recovery", "Settings" };
+constexpr const char* kTabLabels[] = { "App Explorer", "OG Bootloader Installer", "Recovery", "Settings" };
 constexpr int kTabCount = int(std::size(kTabLabels));
 
 // ---------------------------------------------------------------------------
@@ -66,6 +66,11 @@ struct Settings {
     int windowW = 1280;
     int windowH = 800;
     std::string remoteCatalogUrl;
+    /// Whether this settings.ini has ever had the shipped default catalog URL
+    /// seeded into it. Always written from the first save onward; the only
+    /// thing that reads it is remoteCatalogUrlAtStartup(), whose header
+    /// explains why an empty URL alone cannot be trusted to mean "off".
+    bool remoteCatalogDefaultSeeded = false;
 };
 
 Theme themeFromName(const std::string& name)
@@ -86,8 +91,17 @@ Settings loadSettings()
 {
     Settings s;
     std::ifstream in(settingsPath());
-    if (!in) return s; // first launch, or unreadable: fall back to defaults
 
+    // A MISSING file is parsed as an empty one rather than returned early, and
+    // that is why this is a loop guard instead of a `return` above. The
+    // seeding at the bottom is the whole reason a first launch reads settings
+    // at all, and a first launch is exactly the case with no file to open. An
+    // early return skipped it, then saveSettings() wrote an empty URL beside
+    // the marker saying the default had already been offered -- which is the
+    // one combination remoteCatalogUrlAtStartup() reads as "the user cleared
+    // this on purpose", so the default could never be seeded again. Keeping a
+    // SINGLE exit means the rule cannot be bypassed by a path that returns
+    // before reaching it.
     std::string line;
     while (std::getline(in, line)) {
         // Splitting, CR tolerance and trimming all live in parseSettingsLine()
@@ -119,7 +133,24 @@ Settings loadSettings()
             if (auto normalized = normalizeRemoteCatalogUrl(value))
                 s.remoteCatalogUrl = *normalized;
         }
+        // Any value at all counts as "the marker is present". It is written as
+        // "1" and never read back as a number: what matters is that an earlier
+        // run of a build that HAS a default got as far as saving, which is
+        // precisely what distinguishes a user who cleared the field from one
+        // who was never offered anything to clear.
+        else if (key == "remoteCatalogDefaultSeeded") s.remoteCatalogDefaultSeeded = true;
     }
+
+    // Seeding happens HERE, after the whole file has been read, not inside the
+    // loop: the rule needs both the URL and the marker, and settings.ini has no
+    // guaranteed key order -- deciding at the moment `remoteCatalogUrl` is
+    // parsed would read a marker that may not have been reached yet.
+    s.remoteCatalogUrl = remoteCatalogUrlAtStartup(s.remoteCatalogUrl,
+                                                   s.remoteCatalogDefaultSeeded);
+    // Set unconditionally, so the marker lands on disk at the next save
+    // whichever branch above ran. From then on an empty URL means "off" and
+    // stays meaning it.
+    s.remoteCatalogDefaultSeeded = true;
 
     // Clamped to the tab count. A settings.ini written by a build with MORE
     // tabs than this one has must not select a tab that does not exist here.
@@ -145,6 +176,10 @@ void saveSettings(const Settings& s)
     // typed URL through normalizeRemoteCatalogUrl() and so cannot hand a
     // newline down here to split the file.
     out << formatSettingsLine("remoteCatalogUrl", s.remoteCatalogUrl);
+    // Deliberately not conditional on the field: loadSettings() forces it true,
+    // so every file this app writes carries it, including the one written by
+    // the very first run that seeded the default.
+    out << formatSettingsLine("remoteCatalogDefaultSeeded", "1");
 }
 
 // Two instances of this app can run at once -- a user opening it twice, a
@@ -363,13 +398,15 @@ int App::run()
     // The App Explorer tab's data source: embedded is compiled in and always
     // available; local scans catalog/ beside the executable; remote is
     // whatever was cached from a previous run (loadCache() is local file
-    // I/O, not a network call) plus a live fetch of whatever URL the user
-    // configured last time. On a fresh install that URL is empty and no
-    // fetch happens -- the tab's own control is where a URL gets set, and it
-    // says plainly that nothing is being fetched until one is. A failed or
-    // absent fetch is a status line, not a missing
-    // tab: see RemoteCatalog's own header for why it never clears good data
-    // on failure.
+    // I/O, not a network call) plus a live fetch of whatever URL is
+    // configured. On a fresh install that is the shipped default
+    // (defaultRemoteCatalogUrl(), seeded by loadSettings above), so the app
+    // arrives showing the published catalog rather than showing nothing until
+    // somebody tells the user an address to paste. A user who clears the field
+    // on the Settings tab gets an empty URL and no fetch, and stays that way
+    // across launches -- see remoteCatalogUrlAtStartup(). A failed or absent
+    // fetch is a status line, not a missing tab: see RemoteCatalog's own
+    // header for why it never clears good data on failure.
     //
     // Both the catalog and the setting are handed to the tab below by
     // reference: the control writes the new URL straight into

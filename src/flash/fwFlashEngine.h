@@ -67,10 +67,25 @@ enum class FlashOutcome {
 /// flashPhaseFraction() below and must never use the enumerator's own value as
 /// an ordinal: doing so makes a bar run backwards on every step but the last.
 enum class FlashPhase {
-    StepStarted, Loading, Verifying, Touching, WaitingForVolume, Copying,
+    StepStarted, Loading, Verifying,
+    /// The step's CPU is not where it can be written yet -- no port to touch,
+    /// no drive of its own -- and the engine is giving the board a bounded
+    /// while to get there before it refuses. This is what turns "the DISPLAY
+    /// bootloader's console only enumerates ~10 s after the MAIN CPU goes
+    /// quiet" from a reason to fail into a wait: the step that erased MAIN
+    /// finished, and this one holds until the console appears. See
+    /// kIdentifyWaitMs and the identify loop in runFlashPlan().
+    WaitingForCpu,
+    Touching, WaitingForVolume, Copying,
     WaitingForRelease,   ///< after a successful copy, waiting for THIS step's
                          ///< volume to disappear before the next step looks
-    StepFinished
+    StepFinished,
+    /// Reported by the PREPARATION that runs before step 0 of a plan
+    /// (quietDisplayBeforeMainWrite(), fwFlashPrep.h) -- rebooting the DISPLAY
+    /// CPU into BOOTSEL so the MAIN write that follows is stable. Not part of
+    /// any step: it carries stepIndex 0 and contributes 0 to the progress
+    /// fraction, so the bar sits at the start until the plan proper begins.
+    Preparing,
 };
 
 struct FlashProgress {
@@ -168,6 +183,22 @@ constexpr int kVolumeWaitMs     = 30000;
 constexpr int kEraseRebootWaitMs = 150000;
 
 constexpr int kVolumePollMs     = 250;
+
+/// How long a step gives its CPU to become writable -- to publish a port that
+/// can be touched, or a drive of its own -- before a refusal
+/// (RefusedUnidentified / RefusedWrongCpu / RefusedAmbiguous) is final. The
+/// refusal is re-evaluated against a fresh io.identify() and io.findVolumes()
+/// every kVolumePollMs, and stands only once it has held for this long.
+///
+/// Why any wait at all: io.identify() is LIVE in production (see
+/// makeProductionFlashIo), so a step sees the board as it is right now -- and
+/// right now is routinely mid-transition. The step before this one rebooted a
+/// CPU, and Windows takes a moment to enumerate what came back; a MAIN CPU that
+/// was just erased is silent, and the DISPLAY bootloader's own console only
+/// appears after ~10 s of that silence. Refusing on the first look would refuse
+/// the ordinary case. Twenty seconds covers the ten-second console rule with
+/// margin, and a CPU that has not shown up by then is not about to.
+constexpr int kIdentifyWaitMs   = 20000;
 
 /// How much of ONE step is complete once `phase` has been reported, in 0..1.
 ///

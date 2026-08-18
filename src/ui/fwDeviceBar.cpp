@@ -56,7 +56,11 @@ void drawRow(DeviceModel& model, size_t index, const DeviceView& device, const s
     }
 
     ImGui::SameLine();
-    ImGui::TextColored(kMutedColor, "serial %s", device.serial.empty() ? "(none)" : device.serial.c_str());
+    // The best name the board gives itself: FTDI serial when it enumerates
+    // (legacy firmware), else an RP2040 chip id. "serial Unknown" told the
+    // user nothing about a board the app can in fact tell apart from every
+    // other -- see BoardFingerprint.
+    ImGui::TextColored(kMutedColor, "%s", describeFingerprint(fingerprintOf(device)).c_str());
 
     // describeIdentity() never omits a CPU -- if one is missing this line
     // says so explicitly rather than staying silent about it.

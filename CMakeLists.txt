@@ -9,7 +9,7 @@ project(fwOGAppExplorer VERSION 1.0.0 LANGUAGES C CXX)
 # the two answer different questions. PROJECT_VERSION is semver for the build,
 # and this is what a user should call the thing they are looking at. Bump it to
 # "v1.1" or "v2" here and the title follows.
-set(FWOG_DISPLAY_VERSION "v1")
+set(FWOG_DISPLAY_VERSION "v2")
 
 # MSYS2's gcc precedes MSVC on some machines' PATH, so CMake can silently
 # select GCC for a preset named "msvc" -- which quietly drops the static-CRT
@@ -167,6 +167,10 @@ add_library(fwog_core STATIC
     src/flash/fwFlashPlan.cpp
     src/flash/fwVolumeState.cpp
     src/flash/fwFlashEngine.cpp
+    # The pre-plan DISPLAY quieting the GUI and the CLI both run before a MAIN
+    # install. Pure over FlashIo, like the engine, so fwog_tests drives it.
+    src/flash/fwFlashPrep.h
+    src/flash/fwFlashPrep.cpp
     # The both-CPUs-erased recovery flow's pure logic. Here rather than in
     # fwog_flash for the usual reason: every piece of I/O it performs is
     # injected through ProbeIo, so fwog_tests can drive the whole flow --
@@ -237,6 +241,10 @@ endif()
 add_library(fwog_device STATIC
     src/device/fwDeviceRecords.cpp
     src/device/fwCpuIdentify.cpp
+    # identifyBoardNow(): one fresh Fw::find_all() for the board at a uniqueID.
+    # The live io.identify() behind every production flash (GUI and CLI).
+    src/device/fwBoardIdentify.h
+    src/device/fwBoardIdentify.cpp
     src/device/fwFinderManager.cpp
     src/device/fwDeviceModel.cpp
     # fwCatalogFilter lives under src/catalog/ (it's catalog logic), but its
@@ -555,6 +563,7 @@ add_executable(fwog_tests
     tests/test_fwCpuProbe.cpp
     tests/test_fwSerialPorts.cpp
     tests/test_fwIcoImage.cpp
+    tests/test_fwFlashPrep.cpp
 )
 target_link_libraries(fwog_tests PRIVATE fwog_core fwog_device fwog_platform fwog_flash doctest::doctest)
 
@@ -580,4 +589,17 @@ endif()
 # launch would say nothing useful about the code.
 if(NOT EMSCRIPTEN)
     add_test(NAME fwog_tests COMMAND fwog_tests)
+endif()
+
+# ---------------------------------------------------------------------------
+# fwogcli -- command-line flasher. A console front-end over the SAME flash
+# engine the GUI uses (fwog_flash: runFlashPlan + makeProductionFlashIo), so a
+# scripted flash gets identical touch/wait/hub-port-disambiguation behaviour
+# with none of SDL/ImGui. Links exactly what fwog_tests does -- proof this
+# path is SDL-free -- and is a plain CONSOLE subsystem exe (no WIN32_EXECUTABLE)
+# so its stdout reaches the shell. Not built for the web: it needs USB/serial.
+# ---------------------------------------------------------------------------
+if(NOT EMSCRIPTEN)
+    add_executable(fwogcli src/cli/fwCli.cpp)
+    target_link_libraries(fwogcli PRIVATE fwog_core fwog_device fwog_platform fwog_flash)
 endif()

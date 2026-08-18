@@ -52,6 +52,13 @@ firmware/checksums.txt
 # top level is a scratch copy of somebody's firmware build.
 /*.uf2
 
+# The generated remote catalog: tools/build_catalog.py copies whole .uf2
+# images in here so the tree can be uploaded to docs.freewili.com as-is, and
+# those are the same multi-megabyte binaries that are kept out of git
+# everywhere else. publish/sources.json and publish/README.md -- the authored
+# input and the upload procedure -- are committed; the build product is not.
+publish/out/
+
 # Packaged release archives. The published build is a GitHub Release asset,
 # not a file in git history -- see the download link in README.md.
 release/

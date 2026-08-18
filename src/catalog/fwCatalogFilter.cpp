@@ -86,8 +86,9 @@ std::string flashDisabledReasonFor(bool deviceSupportAvailable,
         // "No FreeWili is connected.", which is what a null `device` would
         // have produced and which is simply false when the device bar is
         // showing this exact board's row.
-        return "A FreeWili is connected, but its identity could not be confirmed yet "
-               "-- see Recovery: \"" + std::string(kBoardSerialUnidentifiedTitle) + "\".";
+        return "A FreeWili is connected, but it is not the board that was selected -- what it "
+               "reports about itself contradicts the selection. Click its row in the device bar "
+               "to select it. See Recovery: \"" + std::string(kBoardSerialUnidentifiedTitle) + "\".";
     }
     if (entry.uf2.empty())
         return "This entry has no firmware to flash.";

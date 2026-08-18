@@ -85,11 +85,12 @@ Recovery tab text is needed.
 
 One real-world observation worth keeping: **this board has been seen
 reporting its serial as the literal string `"Unknown"`**, which is what
-fwfinder emits for a flashable OG board when it finds no FTDI child. The app
-treats `"Unknown"` and empty as equally unidentified
-(`serialIsUnidentified()`, `src/device/fwDeviceModel.cpp`) and refuses to
-flash rather than trusting the topological `uniqueID`, which names a USB
-socket rather than a board.
+fwfinder emits for a flashable OG board when it finds no FTDI child. It has
+since turned out (2026-08-18 pass, below) that under OG firmware the FTDI
+never enumerates at all, so `"Unknown"` is the normal state and the app no
+longer refuses on it: boards are told apart by the RP2040 chip ids their CDC
+ports report (`BoardFingerprint`, `src/device/fwDeviceModel.h`), and a refusal
+needs a positive contradiction, never a missing serial.
 
 ---
 
@@ -545,3 +546,48 @@ the "~10 s of MAIN silence" rule is about.
 - **Emscripten / web** — never compiled, by explicit decision. See
   `web/README.md` for what a person with emsdk should try first, including
   the COOP/COEP headers `-pthread` requires.
+
+---
+
+## 2026-08-18 — every flash path, from every board state (VERIFIED)
+
+Board: FreeWili OG, MAIN chip `E463A8574B5D3D35`, DISPLAY chip
+`E463A8574B183D35`, FTDI serial never enumerating under OG firmware
+(`Unknown` for the board's whole working life — the reason the GUI could not
+flash it at all before this pass; see `BoardFingerprint`, fwDeviceModel.h).
+
+Everything below was run through **both** `fwogcli` and the GUI unless noted,
+against `build/win-msvc-release`, and each ended with both CPUs running the
+OG app and the display bootloader reported present.
+
+| # | Starting state | Operation | Result |
+|---|---|---|---|
+| 1 | both CPUs running an OG app | flash an OG app | OK — DISPLAY parked in BOOTSEL first, MAIN touched, written by delta wait, DISPLAY brought back by the new MAIN firmware |
+| 2 | MAIN in BOOTSEL (by touch), DISPLAY running | flash an OG app | OK — MAIN's drive chosen by hub port with the DISPLAY drive mounted beside it |
+| 3 | DISPLAY in BOOTSEL, MAIN running | flash an OG app | OK — no prep needed, MAIN touched |
+| 4 | both CPUs in BOOTSEL (no serial, no chip id) | flash an OG app | OK — MAIN's drive chosen by hub port; the fingerprint gate does not refuse a silent board |
+| 5 | both running an OG app | install display bootloader | OK — ERASE MAIN, WRITE DISPLAY (both by touch) |
+| 6 | MAIN blank, DISPLAY running the bootloader | flash an OG app | OK (GUI and CLI) — bootloader console touched into BOOTSEL first, MAIN's blank drive written by hub port |
+| 7 | both running an OG app | install the ORIGINAL firmware (ERASE DISPLAY, WRITE DISPLAY, WRITE MAIN) | OK — 3 min 13 s (a 16 MB display image over the bootrom); chip ids unchanged under the legacy firmware |
+| 8 | original firmware on both CPUs | install display bootloader | OK — legacy CDC ports touched, bootloader restored |
+| 9 | DISPLAY erased (blank), MAIN running | install display bootloader | OK — step 2 waited ("waiting for CPU") until the blank DISPLAY's drive appeared, then wrote it by hub port |
+| 10 | both CPUs erased | install display bootloader, then an OG app | OK — every drive resolved by hub port; MAIN's slow-to-appear blank drive was waited for |
+
+Observations worth keeping:
+
+- **The FTDI serial is not a usable board identity on this hardware.** It did
+  not enumerate under the OG app, the OG bootloader, or the original v92/v67
+  firmware in this session. RP2040 chip ids (the CDC serial) are stable across
+  every firmware above and are what the app now uses.
+- **A blank RP2040 does not always re-enumerate immediately.** After an erase
+  the erased CPU's drive was seen to take several seconds to appear (state 10:
+  "main not detected" straight after `erase-main-cpu`); the engine's identify
+  wait (kIdentifyWaitMs) is what makes the following step succeed.
+- **The freshly booted MAIN firmware resets the DISPLAY.** A DISPLAY parked in
+  BOOTSEL ahead of a MAIN install came back running its app every time without
+  any action from the host, so the parking needs no undo step.
+- **Attribution by timing alone is not enough after an erase.** MAIN's blank
+  drive re-enumerating a second after the DISPLAY was touched lands inside the
+  "wait for the drive that appeared" window; the wait now checks each arrival
+  against the live hub-position identity and skips a drive that belongs to the
+  other CPU (`waitForNewVolume`, fwFlashEngine.cpp).

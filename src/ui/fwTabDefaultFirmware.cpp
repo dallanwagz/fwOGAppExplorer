@@ -384,32 +384,26 @@ void DefaultFirmwareTab::draw(DeviceModel& deviceModel, FlashDialog& flashDialog
     // happening", which is why they are kept apart from `reason` below.
     const bool busy = flashDialog.isOpen() || probeRunning || !m_pendingInstallSlug.empty();
 
-    // Both cards' refusals, computed up front so an identical one can be said
-    // ONCE instead of twice.
+    // Each install's own refusal.
     //
-    // Every refusal that is about the BOARD rather than about the entry -- no
-    // device, not an OG, an unconfirmed serial, the web build -- is by
-    // construction the same sentence on both cards, and printing it twice was
-    // the single noisiest thing left on this tab: two copies of a
-    // two-line-wrapping red paragraph above two buttons that are obviously both
-    // disabled for the same reason. It is said once, above both, where it is no
-    // less visible and no less specific.
+    // These were once printed ONCE above both cards when they matched, because
+    // a board-level refusal ("no device", "not an OG") is by construction the
+    // same sentence on both and two copies of a wrapping red paragraph above
+    // two adjacent disabled buttons was the noisiest thing on this tab.
     //
-    // Nothing is hidden and nothing is weakened: the buttons are still disabled
-    // by their OWN reason (see the `reason` argument to drawBigButton below,
-    // which is unchanged), and a refusal that differs between the two cards --
-    // an entry with no assets, or one whose CPU a probe has measured the one
-    // mounted drive NOT to be -- is still printed per card, because then the
-    // two cards really are saying different things.
+    // That collapsing is gone with the deprecated-firmware card, which now
+    // lives at the bottom of the Danger zone behind its own disclosure. A
+    // single line printed up here would be nowhere near it -- and, worse,
+    // invisible entirely while its header is closed -- so each card says its
+    // own reason, in its own place, where it is about something the user can
+    // see. The bootloader card is the only one left at the top, so nothing is
+    // said twice anyway.
     const std::string bootloaderReason =
         bootloader ? flashDisabledReason(*bootloader, devPtr, selectedDevice.has_value())
                    : std::string{};
     const std::string legacyReason =
         legacy ? flashDisabledReason(*legacy, devPtr, selectedDevice.has_value())
                : std::string{};
-    const bool sharedReason = !bootloaderReason.empty() && bootloaderReason == legacyReason;
-    if (sharedReason)
-        wrappedColored(kErrorColor, bootloaderReason);
 
     /// Draws one install card and, when its button is clicked, either opens the
     /// flash dialog or starts the identification that clicking it needs first.
@@ -473,12 +467,11 @@ void DefaultFirmwareTab::draw(DeviceModel& deviceModel, FlashDialog& flashDialog
         if (subtitle) ImGui::TextColored(kMutedColor, "%s", subtitle);
 
         // At most ONE status line, and only when there is something to say. A
-        // refusal outranks everything below it -- and when it is the shared one
-        // already printed above both cards, it outranks them SILENTLY here,
-        // rather than falling through to reprint a stale note underneath a
-        // button that is refusing for a different reason entirely.
+        // refusal outranks everything below it, rather than falling through to
+        // print a stale note underneath a button that is refusing for a
+        // different reason entirely.
         if (!reason.empty()) {
-            if (!sharedReason) wrappedColored(kErrorColor, reason);
+            wrappedColored(kErrorColor, reason);
         } else if (m_pendingInstallSlug == entry->slug)
             wrappedColored(kBusyColor, "Identifying which CPU is which...");
         else if (!m_autoIdentifyNote.empty() && m_autoIdentifyNoteSlug == entry->slug)
@@ -507,12 +500,6 @@ void DefaultFirmwareTab::draw(DeviceModel& deviceModel, FlashDialog& flashDialog
     ImGui::Spacing();
     ImGui::Spacing();
 
-    installCard(legacy, ICON_MD_HISTORY " Original FreeWili (deprecated firmware)", legacyReason,
-                legacy ? detail::legacyVersion(*legacy) : std::string{},
-                "Removes the display bootloader.");
-
-    ImGui::Spacing();
-    ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -526,6 +513,30 @@ void DefaultFirmwareTab::draw(DeviceModel& deviceModel, FlashDialog& flashDialog
     drawEraseCard(eraseDisplay, TargetCpu::Display, deviceModel, flashDialog,
                   m_eraseConfirm[eraseSlot(TargetCpu::Display)],
                   sizeof(m_eraseConfirm[0]));
+
+    // THIRD in the Danger zone, and behind a disclosure like the two erases
+    // above it. It used to sit at the top of the tab as a big button beside the
+    // bootloader install -- equal billing for the one action here that takes a
+    // working OG board BACKWARDS. It removes the display bootloader, so every
+    // OG app stops working until that is reinstalled, which is exactly the
+    // shape of thing this section exists to keep behind a deliberate click.
+    //
+    // No typed confirmation, unlike the erases: this one WRITES firmware and
+    // leaves a working (if deprecated) board, and the flash dialog it opens
+    // still shows the full plan and its warnings before anything happens. The
+    // closed header is what was missing, not another word to type.
+    if (!legacy) {
+        ImGui::TextColored(kMutedColor,
+                           "Deprecated OLD firmware: no firmware was embedded in this build.");
+    } else if (ImGui::CollapsingHeader(
+                   "I understand this removes the display bootloader and OG apps will stop "
+                   "working -- show the deprecated firmware")) {
+        ImGui::Indent();
+        installCard(legacy, ICON_MD_HISTORY " Deprecated OLD firmware (do not use)", legacyReason,
+                    detail::legacyVersion(*legacy),
+                    "Removes the display bootloader.");
+        ImGui::Unindent();
+    }
 
     // The doorway to the reference material this tab used to print inline.
     // BootloaderMissing is the section that now carries it: when each install

@@ -264,26 +264,23 @@ TEST_CASE("the same board replugged into the same port is still recognised via s
     CHECK(m.selected()->serial == "SN-AAA");
 }
 
-TEST_CASE("a device with an empty serial is never treated as still selected")
+TEST_CASE("a device with no identifiers at all is still selected -- there is nothing to contradict")
 {
-    // Handled explicitly, not incidentally: a device that will not say what
-    // it is does not get assumed unchanged just because nothing else about
-    // it looks different.
+    // The rule is CONTRADICTION, not confirmation. A board that says nothing
+    // about itself (no FTDI serial, both CPUs in the bootrom) cannot be shown
+    // to be a different board, and refusing it refused every FreeWili OG in
+    // the states it most needs flashing in. See BoardFingerprint.
     std::vector<DeviceView> scan{ device("A", 1, "") };
     DeviceModel m([&scan]() -> std::expected<std::vector<DeviceView>, std::string> { return scan; });
     m.refresh();
     m.select(0);
 
-    CHECK_FALSE(m.selected().has_value());
+    REQUIRE(m.selected().has_value());
+    CHECK(m.selected()->uniqueID == 1);
 }
 
-// --- Fix round 3: "Unknown" is fwfinder's own sentinel literal for a
-// FreeWili board whose FTDI child device was not found
-// (_deps/fwfinder-src/src/fwfinder.cpp) -- non-empty, so the round-2 fix's
-// "empty serial never matches" rule alone does not catch it. It was
-// observed on the real connected board in a degraded state during the round
-// 2 session. Two DIFFERENT boards that both degrade to "Unknown" on the
-// same port must still refuse -- this is the regression coverage for that.
+// --- BoardFingerprint: the pure comparison DeviceModel and the flash gate
+// share. Pinned here because both layers depend on exactly these answers.
 
 TEST_CASE("serialIsUnidentified recognises both empty and fwfinder's \"Unknown\" sentinel")
 {
@@ -296,70 +293,118 @@ TEST_CASE("serialIsUnidentified recognises both empty and fwfinder's \"Unknown\"
     CHECK_FALSE(serialIsUnidentified(" Unknown"));
 }
 
-TEST_CASE("a device reporting fwfinder's \"Unknown\" serial sentinel is never treated as still selected, before or after a same-port swap")
+TEST_CASE("fingerprintOf normalises \"Unknown\" to empty and carries both chip ids")
 {
-    // "Unknown" is a non-empty literal (see serialIsUnidentified's comment),
-    // so it is never trusted as a match against itself -- not immediately
-    // after selecting it (same rule as the empty-serial case above: a
-    // device that will not say what it is does not get assumed unchanged
-    // just because nothing else about it looks different yet), and not
-    // after a DIFFERENT board that happens to ALSO be reporting "Unknown"
-    // lands on the same port -- the exact case a naive `serial == serial`
-    // comparison would wrongly accept, and the scenario this fix round
-    // closes (test_fwFlashController.cpp has the matching selectionUnchanged
-    // regression test for the FlashDialog-facing version of this).
+    CpuIdentity id;
+    id.mainPort = "COM10";  id.mainChipSerial    = "AAAA";
+    id.displayPort = "COM11"; id.displayChipSerial = "BBBB";
+    const BoardFingerprint fp = fingerprintOf("Unknown", id);
+    CHECK(fp.serial.empty());
+    CHECK(fp.mainChip == "AAAA");
+    CHECK(fp.displayChip == "BBBB");
+    CHECK(fp.identified());
+    CHECK(fingerprintOf("FW4788", CpuIdentity{}).serial == "FW4788");
+    CHECK_FALSE(fingerprintOf("", CpuIdentity{}).identified());
+    CHECK_FALSE(fingerprintOf("Unknown", CpuIdentity{}).identified());
+}
+
+TEST_CASE("fingerprintsContradict fires only on an identifier both sides know and disagree on")
+{
+    const BoardFingerprint a{ "FW1", "AAAA", "BBBB" };
+    CHECK_FALSE(fingerprintsContradict(a, a));
+    CHECK_FALSE(fingerprintsContradict(a, BoardFingerprint{}));            // nothing known -> nothing differs
+    CHECK_FALSE(fingerprintsContradict(BoardFingerprint{}, BoardFingerprint{}));
+    CHECK_FALSE(fingerprintsContradict(a, BoardFingerprint{ "", "AAAA", "" }));  // partial agreement
+    CHECK_FALSE(fingerprintsContradict(a, BoardFingerprint{ "FW1", "", "" }));
+    CHECK(fingerprintsContradict(a, BoardFingerprint{ "FW2", "", "" }));         // serial differs
+    CHECK(fingerprintsContradict(a, BoardFingerprint{ "", "XXXX", "" }));        // main chip differs
+    CHECK(fingerprintsContradict(a, BoardFingerprint{ "", "", "YYYY" }));        // display chip differs
+    CHECK(fingerprintsContradict(a, BoardFingerprint{ "FW1", "AAAA", "YYYY" })); // one field is enough
+    // Symmetric.
+    CHECK(fingerprintsContradict(BoardFingerprint{ "FW2", "", "" }, a));
+}
+
+TEST_CASE("adoptKnown fills only the empty fields and never overwrites a known one")
+{
+    const BoardFingerprint stored{ "", "AAAA", "" };
+    const BoardFingerprint seen{ "FW1", "ZZZZ", "BBBB" };
+    const BoardFingerprint out = adoptKnown(stored, seen);
+    CHECK(out.serial == "FW1");
+    CHECK(out.mainChip == "AAAA");     // NOT ZZZZ: known stays known
+    CHECK(out.displayChip == "BBBB");
+    CHECK(adoptKnown(BoardFingerprint{}, BoardFingerprint{}) == BoardFingerprint{});
+}
+
+TEST_CASE("describeFingerprint prefers the FTDI serial, then a chip id, and never says \"Unknown\"")
+{
+    CHECK(describeFingerprint(BoardFingerprint{ "FW4788", "AAAA", "BBBB" }) == "serial FW4788");
+    CHECK(describeFingerprint(BoardFingerprint{ "", "AAAA", "BBBB" }) == "MAIN chip AAAA");
+    CHECK(describeFingerprint(BoardFingerprint{ "", "", "BBBB" }) == "DISPLAY chip BBBB");
+    CHECK(describeFingerprint(BoardFingerprint{}) == "unidentified");
+}
+
+// --- The FTDI serial. On a FreeWili OG it is read from a separate FTDI chip
+// that does not enumerate at all under OG firmware, so fwfinder reports the
+// literal "Unknown" for the board's whole working life. That used to refuse
+// every such board; now it is simply an identifier the board does not offer.
+
+TEST_CASE("a board reporting fwfinder's \"Unknown\" serial is selectable, and told apart by chip id when one is known")
+{
     std::vector<DeviceView> scan{ device("A", 1, "Unknown") };
     DeviceModel m([&scan]() -> std::expected<std::vector<DeviceView>, std::string> { return scan; });
     m.refresh();
     m.select(0);
-    CHECK_FALSE(m.selected().has_value());
+    REQUIRE(m.selected().has_value());            // an OG board under OG firmware, every day
 
-    // Board A is unplugged; a DIFFERENT board B is plugged into the SAME
-    // port and it, too, currently reports "Unknown".
-    scan = { device("B", 1, "Unknown") };
+    // Board A's MAIN comes up and reports its chip id: learned, not refused.
+    DeviceView aRunning = device("A", 1, "Unknown");
+    aRunning.identity.mainPort = "COM10";
+    aRunning.identity.mainChipSerial = "AAAA";
+    scan = { aRunning };
+    m.refresh();
+    REQUIRE(m.selected().has_value());
+
+    // A DIFFERENT board on the same port, also "Unknown", but a different
+    // chip: contradicted, refused. (An explicit selection -- select(0) above --
+    // is never re-made on its own; that is the user's call.)
+    DeviceView bRunning = device("B", 1, "Unknown");
+    bRunning.identity.mainPort = "COM10";
+    bRunning.identity.mainChipSerial = "BBBB";
+    scan = { bRunning };
     m.refresh();
     CHECK_FALSE(m.selected().has_value());
+    REQUIRE(m.selectedByIdOnly().has_value());    // still visible for wording
 }
 
-// --- Fix round 4: the "Unknown" LATCH. fwfinder reports "Unknown" as a
-// FreeWili's serial for as long as it cannot find the board's FTDI child --
-// a transient state this hardware really does pass through. A selection
-// recorded inside that window latched m_selectedSerial to a string that
-// identifies nothing, and NOTHING ever updated it: when the real serial
-// arrived, selected() compared it against "Unknown", called that a mismatch,
-// and refused for the life of the process. A perfectly healthy board could
-// only be flashed by restarting the app. refresh() now adopts a FIRST
-// identifying serial onto a selection that never had one -- which is not a
-// change of identity, because there was no identity. These tests pin both
-// halves: the adoption, and the substitution guard it must not weaken.
+// --- Adoption. A selection recorded while the board said nothing about
+// itself must be able to LEARN who it is, or a transient "Unknown" would latch
+// a fingerprint that identifies nothing and every later real serial would
+// look like a mismatch -- the bug the serial-only predecessor of this code
+// had. adoptKnown() fills only empty fields, so this is learning, not
+// re-identification, and a real value once pinned can only be contradicted.
 
-TEST_CASE("a selection auto-made while the serial read \"Unknown\" resolves once the board says who it is")
+TEST_CASE("a selection auto-made while the serial read \"Unknown\" learns the real serial and is then held to it")
 {
-    // The reported bug, start to finish.
     std::vector<DeviceView> scan{ device("FreeWili", 1, "Unknown") };
     DeviceModel m([&scan]() -> std::expected<std::vector<DeviceView>, std::string> { return scan; });
 
-    m.refresh();                                  // auto-selects, latching "Unknown"
-    CHECK_FALSE(m.selected().has_value());        // correctly refused WHILE unidentified
-    REQUIRE(m.selectedByIdOnly().has_value());    // ...but the board is right there
+    m.refresh();                                  // auto-selects with an empty fingerprint
+    REQUIRE(m.selected().has_value());            // usable straight away
 
     scan = { device("FreeWili", 1, "FW6548") };   // fwfinder finds the FTDI child
     m.refresh();
-
-    REQUIRE(m.selected().has_value());            // before this fix: nullopt, forever
+    REQUIRE(m.selected().has_value());
     CHECK(m.selected()->serial == "FW6548");
     CHECK(m.selected()->uniqueID == 1);
 }
 
 TEST_CASE("the same adoption happens from an EMPTY serial, not just fwfinder's \"Unknown\"")
 {
-    // serialIsUnidentified() covers both; the adoption must key off that same
-    // predicate rather than off the "Unknown" literal alone.
     std::vector<DeviceView> scan{ device("FreeWili", 1, "") };
     DeviceModel m([&scan]() -> std::expected<std::vector<DeviceView>, std::string> { return scan; });
 
     m.refresh();
-    CHECK_FALSE(m.selected().has_value());
+    REQUIRE(m.selected().has_value());
 
     scan = { device("FreeWili", 1, "FW6548") };
     m.refresh();
@@ -368,66 +413,61 @@ TEST_CASE("the same adoption happens from an EMPTY serial, not just fwfinder's \
     CHECK(m.selected()->serial == "FW6548");
 }
 
-TEST_CASE("adoption applies to an EXPLICIT selection too, not only an auto one")
+TEST_CASE("adoption applies to an EXPLICIT selection too, and pins it against a later substitution")
 {
-    // A click made while the row read "Unknown" confirmed no identity either,
-    // so the same reasoning applies -- and the flash path does not care which
-    // way the selection was made. Two devices present, so nothing here could
-    // have been auto-selected.
+    // Two devices present, so nothing here could have been auto-selected.
     std::vector<DeviceView> scan{ device("A", 1, "Unknown"), device("B", 2, "SN-BBB") };
     DeviceModel m([&scan]() -> std::expected<std::vector<DeviceView>, std::string> { return scan; });
     m.refresh();
     m.select(0);                                  // explicitly picks the unidentified one
-    CHECK_FALSE(m.selected().has_value());
+    REQUIRE(m.selected().has_value());
 
     scan = { device("A", 1, "SN-AAA"), device("B", 2, "SN-BBB") };
     m.refresh();
-
     REQUIRE(m.selected().has_value());
     CHECK(m.selected()->uniqueID == 1);
     CHECK(m.selected()->serial == "SN-AAA");
-}
-
-TEST_CASE("adoption is a one-way door: once a real serial is pinned, a substitution is still refused")
-{
-    // THE test that says this is not a hole in the substitution guard. The
-    // adoption fires exactly once, on the transition out of "no identity"; a
-    // second, different real serial on the same port is a genuine swap and
-    // must be refused exactly as before.
-    std::vector<DeviceView> scan{ device("A", 1, "Unknown") };
-    DeviceModel m([&scan]() -> std::expected<std::vector<DeviceView>, std::string> { return scan; });
-    m.refresh();
-
-    scan = { device("A", 1, "FW1111") };
-    m.refresh();
-    REQUIRE(m.selected().has_value());            // adopted
-    CHECK(m.selected()->serial == "FW1111");
 
     // A DIFFERENT board on the SAME topological uniqueID -- the exact hazard
-    // the serial comparison exists for.
-    scan = { device("B", 1, "FW2222") };
+    // the fingerprint comparison exists for. Explicit selection: refused, and
+    // it stays refused; it does not recover by cycling through "Unknown"
+    // either, because the pinned serial is never overwritten short of a new
+    // select().
+    scan = { device("C", 1, "SN-CCC"), device("B", 2, "SN-BBB") };
     m.refresh();
     CHECK_FALSE(m.selected().has_value());
-
-    // And it does not recover by cycling through "Unknown" either: the stored
-    // serial is real now, so nothing can overwrite it short of a new select().
-    scan = { device("B", 1, "Unknown") };
+    scan = { device("C", 1, "Unknown"), device("B", 2, "SN-BBB") };
     m.refresh();
-    CHECK_FALSE(m.selected().has_value());
-    scan = { device("B", 1, "FW2222") };
+    REQUIRE(m.selected().has_value());            // says nothing -> not contradicted (see BoardFingerprint)
+    scan = { device("C", 1, "SN-CCC"), device("B", 2, "SN-BBB") };
     m.refresh();
-    CHECK_FALSE(m.selected().has_value());
+    CHECK_FALSE(m.selected().has_value());        // ...but the moment it speaks, refused again
 }
 
-TEST_CASE("a pinned real serial going unidentified keeps refusing -- the mirror case")
+TEST_CASE("an AUTO-selection follows a swapped-in single board instead of stranding the app")
 {
-    // A board part-way through re-enumeration briefly reports "Unknown". From
-    // this data that is indistinguishable from a swap in progress, so it must
-    // refuse; the board is still visible by uniqueID, which is what lets the
-    // UI word it as "identity could not be confirmed yet" rather than "no
-    // FreeWili is connected" (flashDisabledReasonFor, fwCatalogFilter.cpp) or
-    // "a different device now occupies this port" (SelectionCheck::
-    // UnidentifiedSerial, fwFlashController.cpp).
+    // With ONE board connected there is no choice to protect: a contradiction
+    // can only mean the board was swapped, and the new board is the one the
+    // user is looking at. Refusing forever here helped nobody -- a flash in
+    // progress is guarded by FlashDialog's own gate, not by this.
+    std::vector<DeviceView> scan{ device("A", 1, "FW1111") };
+    DeviceModel m([&scan]() -> std::expected<std::vector<DeviceView>, std::string> { return scan; });
+    m.refresh();
+    REQUIRE(m.selected().has_value());
+    CHECK(m.selected()->serial == "FW1111");
+
+    scan = { device("B", 1, "FW2222") };
+    m.refresh();
+    REQUIRE(m.selected().has_value());
+    CHECK(m.selected()->serial == "FW2222");     // re-selected: the only board there is
+}
+
+TEST_CASE("a pinned real serial going unidentified is not a refusal -- the mirror case")
+{
+    // A board part-way through re-enumeration briefly reports "Unknown", and a
+    // MAIN CPU dropping into BOOTSEL takes its chip id with it. Neither is
+    // evidence of a different board, and the flash that caused the second one
+    // must not be refused by it.
     std::vector<DeviceView> scan{ device("A", 1, "FW6548") };
     DeviceModel m([&scan]() -> std::expected<std::vector<DeviceView>, std::string> { return scan; });
     m.refresh();
@@ -435,12 +475,9 @@ TEST_CASE("a pinned real serial going unidentified keeps refusing -- the mirror 
 
     scan = { device("A", 1, "Unknown") };
     m.refresh();
-    CHECK_FALSE(m.selected().has_value());        // refuses...
-    REQUIRE(m.selectedByIdOnly().has_value());    // ...while still being visible for wording
-    CHECK(m.selectedByIdOnly()->serial == "Unknown");
+    REQUIRE(m.selected().has_value());
+    CHECK(m.selected()->serial == "Unknown");
 
-    // The same board finishing its re-enumeration resolves again -- refusal
-    // here is transient, exactly as the message claims.
     scan = { device("A", 1, "FW6548") };
     m.refresh();
     REQUIRE(m.selected().has_value());
@@ -462,48 +499,30 @@ TEST_CASE("a second device still clears an auto-selection that was made while th
     CHECK_FALSE(m.selected().has_value());
     CHECK_FALSE(m.selectedByIdOnly().has_value());   // genuinely cleared, not merely unconfirmed
 
-    // ...and it stays cleared when the list narrows back to one, because
-    // nothing re-auto-selects a selection the user was asked to make.
+    // ...and auto-select from a blank slate is fine once the list narrows back
+    // to one.
     scan = { device("A", 1, "FW1111") };
     m.refresh();
-    REQUIRE(m.selected().has_value());               // auto-select from a blank slate is fine
+    REQUIRE(m.selected().has_value());
     CHECK(m.selected()->serial == "FW1111");
 }
 
-TEST_CASE("adoption never invents an identity from a board that keeps saying \"Unknown\"")
-{
-    // Both sides must be identified for anything to be pinned. A board that
-    // never says who it is stays unconfirmed for as long as that is true --
-    // failing closed, not settling for the sentinel.
-    std::vector<DeviceView> scan{ device("A", 1, "Unknown") };
-    DeviceModel m([&scan]() -> std::expected<std::vector<DeviceView>, std::string> { return scan; });
-
-    for (int i = 0; i < 5; ++i) m.refresh();
-    CHECK_FALSE(m.selected().has_value());
-
-    // A DIFFERENT board that is ALSO reporting "Unknown" lands on the same
-    // port: still nothing is confirmed, and nothing is adopted.
-    scan = { device("B", 1, "Unknown") };
-    m.refresh();
-    CHECK_FALSE(m.selected().has_value());
-}
-
-TEST_CASE("selectedByIdOnly resolves by uniqueID alone, without the serial check selected() adds")
+TEST_CASE("selectedByIdOnly resolves by uniqueID alone, without the fingerprint check selected() adds")
 {
     // The seam FlashDialog uses to get a specific SelectionCheck reason
     // (DifferentBoard vs DifferentPort) instead of selected()'s generic
     // nullopt -- see fwFlashDialog.cpp's Idle-state handling. Deliberately
     // permissive on its own; selectionUnchanged() is what re-applies the
-    // strict check before anything is allowed to proceed.
+    // check before anything is allowed to proceed.
     std::vector<DeviceView> scan{ device("A", 1, "SN-AAA") };
     DeviceModel m([&scan]() -> std::expected<std::vector<DeviceView>, std::string> { return scan; });
     m.refresh();
     m.select(0);
 
-    // A different board on the same port: selected() refuses (round-3's own
-    // regression coverage above), but selectedByIdOnly() still resolves it,
-    // by design, since it's the caller's job (selectionUnchanged()) to catch
-    // the mismatch from here.
+    // A different board on the same port: selected() refuses (an explicit
+    // selection is never re-made on its own), but selectedByIdOnly() still
+    // resolves it, by design, since it's the caller's job
+    // (selectionUnchanged()) to catch the mismatch from here.
     scan = { device("B", 1, "SN-BBB") };
     m.refresh();
 

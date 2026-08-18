@@ -40,7 +40,7 @@ If one of the two is a CPU you did not mean to put into bootloader mode, the sim
 
 If BOTH CPUs are erased, there is no drive to unmount -- an RP2040 with blank flash presents RPI-RP2 all by itself, with no button and nothing running. That state is reachable using this app alone (erase the MAIN CPU here, then start the Original FreeWili install, whose first step erases the DISPLAY CPU), and until now it was a dead end: every path refused, including the ones that would have fixed it.
 
-The Identify CPUs action below is the way out of that state, and only that state. The Default Firmware tab's two install buttons now run this same identification THEMSELVES when a click needs it, so getting out no longer requires finding this page first; the button below stays for running it deliberately and for reading what it found. It works because the drives are not actually identical -- only their labels are. The CC1101 sub-GHz radio is wired to the MAIN CPU only, so a small image that probes for the radio and reports what it found can tell you which CPU it is running on. Writing it to one of the two drives makes that drive's CPU reboot into the prober, which both answers the question and removes that drive from the picture; the drive still mounted is the other CPU, by elimination.
+The Identify CPUs action below is the way out of that state, and only that state. The OG Bootloader Installer tab's install button now runs this same identification ITSELF when a click needs it, so getting out no longer requires finding this page first; the button below stays for running it deliberately and for reading what it found. It works because the drives are not actually identical -- only their labels are. The CC1101 sub-GHz radio is wired to the MAIN CPU only, so a small image that probes for the radio and reports what it found can tell you which CPU it is running on. Writing it to one of the two drives makes that drive's CPU reboot into the prober, which both answers the question and removes that drive from the picture; the drive still mounted is the other CPU, by elimination.
 
 That image is the one thing this app will write to a CPU it has not identified, and it is safe to do so for one specific reason: it never configures or drives GPIO 29. GPIO 29 is the PDM microphone's output on the DISPLAY CPU and FPGA_RESET on the MAIN CPU, and a main image driving it on the DISPLAY CPU is precisely the damage every other refusal here exists to prevent. Nothing else in this app is permitted to reach an UNIDENTIFIED CPU, and the answer this prober produces is only ever about ONE drive, so a second one appearing beside it discards the answer rather than extending it. Two mounted drives are not automatically unidentified, though, and it is worth being exact about that rather than reassuring: on a FreeWili both CPUs sit on the board's own internal USB hub, that position identifies each drive on its own, and Flash then proceeds without asking. What the refusal protects is the case where no such identity exists -- which is why this prober exists at all.
 
@@ -57,7 +57,7 @@ Two things stop that port from existing:
 - Firmware built with FWOG_DIAG off has no USB serial at all -- there is nothing to open.
 - The display bootloader's own console only enumerates after the MAIN CPU has gone quiet on the inter-CPU link for 10 seconds. A MAIN CPU that is still running application firmware keeps talking indefinitely, so the DISPLAY console never appears no matter how long you wait -- this is not a "wait a little longer" problem.
 
-If the MAIN CPU is currently running its own firmware (or you are not sure), waiting will not help: go to the Default Firmware tab and erase the MAIN CPU first (Danger zone -> Erase MAIN CPU). That silences it, and the DISPLAY console should enumerate within about 10 seconds afterward. Only do this when the FreeWili 1-OG bootloader install actually will not start -- it is a destructive, one-way step for the MAIN CPU's own firmware, not something to reach for by default.
+If the MAIN CPU is currently running its own firmware (or you are not sure), waiting will not help: go to the OG Bootloader Installer tab and erase the MAIN CPU first (Danger zone -> Erase MAIN CPU). That silences it, and the DISPLAY console should enumerate within about 10 seconds afterward. Only do this when the FreeWili 1-OG bootloader install actually will not start -- it is a destructive, one-way step for the MAIN CPU's own firmware, not something to reach for by default.
 
 If MAIN is already silent -- freshly erased, or the board has never been flashed at all -- and the DISPLAY port still does not appear, unplug and replug the board, wait about 15 seconds without touching it, then refresh the device list before concluding the port is genuinely gone.
 
@@ -77,11 +77,11 @@ If no volume appears even with BOOTSEL held, check the cable next: a charge-only
         "The display bootloader is missing",
         R"TXT(Symptoms: the display stays dark, and the main CPU's application firmware is otherwise running normally. This is what a FreeWili OG looks like before the wiliOGBsp display bootloader has ever been installed, or after an Original FreeWili firmware install removed it.
 
-Fix: Default Firmware tab -> FreeWili 1-OG -> install. That writes bl_display.uf2 to the DISPLAY CPU. Afterward, app firmware for the DISPLAY CPU is embedded in the MAIN CPU's UF2 and arrives automatically over the inter-CPU link, so an ordinary app install flashes both CPUs from one file.
+Fix: OG Bootloader Installer tab -> Install FreeWili OG Bootloader. That writes bl_display.uf2 to the DISPLAY CPU. Afterward, app firmware for the DISPLAY CPU is embedded in the MAIN CPU's UF2 and arrives automatically over the inter-CPU link, so an ordinary app install flashes both CPUs from one file.
 
 That install is only for a board that does not already have the display bootloader. Running it again on a board that does is unnecessary, though not harmful -- it is simply not the normal case.
 
-The install needs the DISPLAY CPU's own USB console, and that console only enumerates after about 10 seconds of MAIN-CPU silence -- so on a board whose MAIN CPU is running application firmware, the install may never even start. Erase the MAIN CPU first (Default Firmware -> Danger zone -> Erase MAIN CPU); once it is quiet, the install can proceed. The app now runs the CPU identification for you when it needs it, but it cannot make a chattering MAIN CPU stop talking -- that is what the erase is for.
+The install needs the DISPLAY CPU's own USB console, and that console only enumerates after about 10 seconds of MAIN-CPU silence -- so on a board whose MAIN CPU is running application firmware, the install may never even start. Erase the MAIN CPU first (OG Bootloader Installer -> Danger zone -> Erase MAIN CPU); once it is quiet, the install can proceed. The app now runs the CPU identification for you when it needs it, but it cannot make a chattering MAIN CPU stop talking -- that is what the erase is for.
 
 If the bootloader is not missing but BROKEN -- installed, yet the DISPLAY CPU will not come up and will not present a console to reinstall through -- Danger zone -> Erase DISPLAY CPU is the way back. It writes the standard Pico flash-erase image to the DISPLAY CPU, and a blank RP2040 presents an RPI-RP2 volume by itself, with no button, which is exactly the state the bootloader install can then be written into. It is destructive and it is recoverable, in that order.
 
@@ -103,7 +103,7 @@ Two distinct reasons this happens:
 - A downloaded file that is truncated or corrupted fails basic UF2 validation and is rejected outright.
 - A file that parses as a valid UF2 but does not match its published checksum is rejected too -- most often because the download is corrupt, occasionally because it is an image built for a different chip or the wrong CPU, checked and stopped before it could reach the board.
 
-Re-download the file and try again, or, if what you are after is one of the two curated bundles, use the Default Firmware tab instead -- that firmware is embedded in this executable and needs no network.)TXT"
+Re-download the file and try again, or, if what you are after is one of the two curated bundles, use the OG Bootloader Installer tab instead -- that firmware is embedded in this executable and needs no network.)TXT"
     },
     {
         RecoveryAnchor::WriteInterrupted,
@@ -134,7 +134,7 @@ The flash dialog's own message names exactly which steps completed, including wh
 
 What the install does regardless of where it stopped: it REMOVES the wiliOGBsp display bootloader, from step 1 onward. That is what this install is for, not a side effect -- but it means "the display bootloader is missing" is now also true, whatever the later steps did or did not manage.
 
-There is no partial fix to reach for here. Re-run the whole Original FreeWili Firmware install from the Default Firmware tab. Writing the same image twice is safe, and the second run finishes what the first one left undone. If step 1 or step 2 keeps failing because the DISPLAY CPU cannot be identified, read "The DISPLAY CPU could not be identified" above first -- erasing the MAIN CPU is what silences the link and lets the display console enumerate.)TXT"
+There is no partial fix to reach for here. Re-run the whole deprecated OLD firmware install from the OG Bootloader Installer tab's Danger zone. Writing the same image twice is safe, and the second run finishes what the first one left undone. If step 1 or step 2 keeps failing because the DISPLAY CPU cannot be identified, read "The DISPLAY CPU could not be identified" above first -- erasing the MAIN CPU is what silences the link and lets the display console enumerate.)TXT"
     },
     {
         RecoveryAnchor::NothingEnumerates,
@@ -146,11 +146,11 @@ If, after that, one CPU enumerates and the other does not, that is a firmware pr
     {
         RecoveryAnchor::BoardSerialUnidentified,
         kBoardSerialUnidentifiedTitle,
-        R"TXT(This is different from either CPU's identification problem above, and it does not stop the MAIN or DISPLAY port from being found. The FreeWili OG's own identifying serial number is read from a separate FTDI USB-to-serial chip on the board, not from either RP2040's own serial port. If that chip's USB device entry is not found during a scan, the board's serial shows as "Unknown" instead of its real number -- the device still appears in the device bar, with both CPUs identified normally, but its own identity has not.
+        R"TXT(This is different from either CPU's identification problem above, and it does not stop the MAIN or DISPLAY port from being found. The FreeWili OG's own serial number is read from a separate FTDI USB-to-serial chip on the board, not from either RP2040's own serial port. Under OG firmware that chip does not enumerate at all, so an OG board's serial reads "Unknown" for its whole working life -- this is normal, not a fault, and it does not stop anything from being flashed.
 
-This app refuses to flash a device it cannot re-identify by serial, on purpose: the serial is what proves this is still the SAME physical board a moment from now as it is right now, and that is exactly the check that stops a flash from silently landing on a different board that gets swapped into the same USB port. An "Unknown" serial cannot make that promise, so the refusal holds even though the board is clearly connected and its CPUs are clearly identified.
+The board is told apart from other boards by what it DOES report: each RP2040 publishes its own chip id as the USB serial of its serial port, and the device bar shows one of those ("MAIN chip ...") when the FTDI serial is absent. The app refuses to flash only when a board positively CONTRADICTS the one it was working with -- a different FTDI serial or a different chip id on the same USB port, which is what a board swap looks like. A board that says nothing about itself (both CPUs sitting in BOOTSEL, no FTDI) is not refused: there is nothing to contradict, and which CPU is which is decided by each drive's position on the board's own USB hub regardless.
 
-Unplug and replug the board, wait a few seconds for USB enumeration to finish, then rescan. If it keeps coming back "Unknown" on the same board, try a different USB port or a cable you know carries data -- see "Nothing enumerates over USB" above for why that matters even when most things ARE enumerating.)TXT"
+If the app does report that a different device now occupies the port, and you have not swapped boards: unplug and replug the board, wait a few seconds for USB enumeration to finish, then rescan or reopen the flash dialog.)TXT"
     },
 };
 
@@ -341,7 +341,7 @@ void TabRecovery::draw(DeviceModel& deviceModel, const std::function<void(int)>&
 
     ImGui::TextWrapped("There are exactly two ways to put a FreeWili CPU into its bootloader "
                        "by hand. Both make that CPU appear as an RPI-RP2 drive, which is what "
-                       "the Default Firmware and App Explorer tabs write to.");
+                       "the OG Bootloader Installer and App Explorer tabs write to.");
     ImGui::Spacing();
 
     // --- 1. MAIN --------------------------------------------------------
@@ -413,8 +413,8 @@ void TabRecovery::draw(DeviceModel& deviceModel, const std::function<void(int)>&
 
 /// The third way into a bootloader, and the only one that is not a physical act:
 /// open a port at 1200 baud. It is here because it is the way BACK from the CPU
-/// probe, and the probe is still live -- the Default Firmware tab's install
-/// buttons run one themselves (autoIdentifyDecision(), ProbeAccess) whenever a
+/// probe, and the probe is still live -- the OG Bootloader Installer tab's
+/// install button runs one itself (autoIdentifyDecision(), ProbeAccess) whenever a
 /// click cannot proceed without it.
 ///
 /// Without this, that flow can create a dead end. A CPU left running the prober

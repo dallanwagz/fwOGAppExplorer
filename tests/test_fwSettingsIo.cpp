@@ -257,3 +257,95 @@ TEST_CASE("lines that name no setting are skipped rather than parsed into junk")
     CHECK_FALSE(parseSettingsLine("=valueWithNoKey").has_value());
     CHECK_FALSE(parseSettingsLine("   =valueWithBlankKey").has_value());
 }
+
+// ---------------------------------------------------------------------------
+// The shipped default catalog URL, and the rule that decides whether a launch
+// starts with it. See remoteCatalogUrlAtStartup() in fwSettingsIo.h.
+// ---------------------------------------------------------------------------
+
+// doctest cannot stringify a std::string_view -- its forward declaration of
+// std::ostream has no operator<< for one -- so every comparison below is
+// against this std::string copy rather than against defaultRemoteCatalogUrl()
+// directly. Same value, and a readable message when an assertion fails.
+static const std::string kDefaultCatalogUrl{ defaultRemoteCatalogUrl() };
+
+TEST_CASE("the shipped default is a URL this app would have accepted from a user") {
+    // The one property that must hold no matter what the default is changed to.
+    // A default that normalizeRemoteCatalogUrl() rejects would be seeded into
+    // settings.ini and then silently dropped by loadSettings() on the very next
+    // launch -- the app would appear to work once and never again.
+    const auto normalized = normalizeRemoteCatalogUrl(defaultRemoteCatalogUrl());
+    REQUIRE(normalized.has_value());
+    CHECK(*normalized == kDefaultCatalogUrl);
+    CHECK(hasHttpsScheme(defaultRemoteCatalogUrl()));
+}
+
+TEST_CASE("a fresh install, and an install upgraded from a build with no default, are both seeded") {
+    // One case, not two, because on disk they are the same case -- and that is
+    // the whole reason the marker exists. A fresh install has no settings.ini
+    // at all; an upgraded one has `remoteCatalogUrl=` written by saveSettings()
+    // whether or not the user ever opened the Settings tab. Judged on the empty
+    // URL alone the upgraded user looks exactly like one who cleared the field,
+    // and would never receive the default -- the feature would ship to nobody
+    // who already had the app. Neither carries the marker, so both are seeded.
+    CHECK(remoteCatalogUrlAtStartup("", false) == kDefaultCatalogUrl);
+}
+
+TEST_CASE("a first launch seeds BEFORE it writes the marker, across two launches") {
+    // The two-launch sequence, because the bug this pins could not be seen in
+    // either launch alone. saveSettings() writes the marker unconditionally, so
+    // whatever URL launch 1 ends up holding is what launch 2 is stuck with: the
+    // marker turns an empty URL from "not offered yet" into "cleared on
+    // purpose", permanently and by design.
+    //
+    // Launch 1 has no settings.ini, so it reaches the rule with no stored URL
+    // and no marker, and must come away with the default.
+    const std::string afterFirstLaunch = remoteCatalogUrlAtStartup("", false);
+    REQUIRE(afterFirstLaunch == kDefaultCatalogUrl);
+
+    // Launch 2 reads back what launch 1 saved -- that URL, plus the marker --
+    // and has to keep it rather than treat a seeded default as a user choice.
+    CHECK(remoteCatalogUrlAtStartup(afterFirstLaunch, true) == kDefaultCatalogUrl);
+
+    // And the state launch 1 must never persist. loadSettings() once returned
+    // early when there was no file to open, skipping the seeding below it; the
+    // save that followed wrote THIS pair, and every later launch read it as a
+    // deliberate clear. The default could not be seeded again on that machine.
+    CHECK(remoteCatalogUrlAtStartup("", true).empty());
+}
+
+TEST_CASE("a URL the user deliberately cleared stays cleared across launches") {
+    // The marker is present, so the empty value is a decision, not an absence.
+    // Re-seeding here would make "clear the field and press Save" a control
+    // that undoes itself on the next launch.
+    CHECK(remoteCatalogUrlAtStartup("", true).empty());
+}
+
+TEST_CASE("a stored URL always wins over the default, seeded or not") {
+    const std::string custom = "https://example.com/mine/apps.json";
+    CHECK(remoteCatalogUrlAtStartup(custom, true)  == custom);
+    CHECK(remoteCatalogUrlAtStartup(custom, false) == custom);
+}
+
+TEST_CASE("a user who stored the default explicitly is indistinguishable from a seeded one") {
+    // Both produce the same URL, which is the point: nothing downstream needs
+    // to know how the field came to hold what it holds.
+    CHECK(remoteCatalogUrlAtStartup(kDefaultCatalogUrl, true) == kDefaultCatalogUrl);
+}
+
+TEST_CASE("the seeded default survives the settings.ini round trip unchanged") {
+    // Seeding writes the default into the file; the next launch reads it back
+    // and re-validates it. If those two disagreed -- an escaping difference, a
+    // trailing character -- the app would fetch a different address than the
+    // one it shipped with, or none at all.
+    const auto parsed = parseSettingsLine(
+        formatSettingsLine("remoteCatalogUrl", kDefaultCatalogUrl));
+    REQUIRE(parsed.has_value());
+    CHECK(parsed->first == "remoteCatalogUrl");
+
+    const auto revalidated = normalizeRemoteCatalogUrl(parsed->second);
+    REQUIRE(revalidated.has_value());
+    CHECK(*revalidated == kDefaultCatalogUrl);
+    // And the value that comes back out is the one a launch then uses.
+    CHECK(remoteCatalogUrlAtStartup(*revalidated, true) == kDefaultCatalogUrl);
+}
