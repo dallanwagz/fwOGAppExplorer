@@ -41,17 +41,35 @@ refusal would be worse than a false warning.
 
 ## Download
 
-**[Download FwOGExplorerV1.zip →](https://github.com/freewili/fwOGAppExplorer/releases/latest)**
+**[Download FwOGExplorerV2.zip →](https://github.com/freewili/fwOGAppExplorer/releases/latest)**
 
 Windows x64. Unzip and run `fwOGExp.exe` — one statically linked executable with
 the firmware images baked in, so there is nothing to install and no
-redistributable to chase. The `catalog/` folder beside it holds a few sample app
-UF2s; the App Explorer tab picks up anything dropped in there.
+redistributable to chase. `fwogcli.exe` ships beside it and drives the same
+flash engine from a terminal.
+
+The `catalog/` folder holds nothing but a note explaining itself, and that is
+the v2 change worth knowing: the app now fetches the published FreeWili catalog
+on first launch, so the apps are there without anything being bundled. Drop a
+`.uf2` into `catalog/` and the App Explorer tab lists it alongside them.
 
 **Linux** works and has flashed a real board, but there is no prebuilt download
 — build it from source, and read [Linux](#linux) first: it needs a few
 development packages, it has one shared-library dependency Windows does not, and
 serial-port permissions usually need a one-time setup step.
+
+## What is new in v2
+
+| | |
+|---|---|
+| **A catalog that fills itself in** | A fresh install fetches `https://docs.freewili.com/og-apps/apps.json` with no configuration — apps arrive without a bundled `catalog/`. Settings can point it elsewhere or clear it. See [The app catalog](#the-app-catalog). |
+| **Flashing from any board state** | Both CPUs running, either or both in `RPI-RP2`, a blank CPU, the display on its bootloader alone, the original firmware installed — every state was exercised on hardware rather than assumed. |
+| **`fwogcli` is a full front-end** | The same engine as the GUI: `list`, `flash`, `install`, `entries`, `info`, `bootsel`, with board selection and real exit codes. See [Command line](#command-line). |
+| **The second tab says what it installs** | It is the **OG Bootloader Installer** now, not a generic firmware tab, because installing the display bootloader is the thing a new board needs first. |
+| **The old FreeWili 1 firmware is named as deprecated** | Restoring it removes the display bootloader, so it sits at the bottom of the Danger zone under a name that says so. |
+
+Publishing to the catalog is [its own section](#publishing-to-it); the tooling
+that builds it ships in `tools/build_catalog.py`.
 
 ## What it does
 
@@ -448,37 +466,42 @@ that are actually mounted.
 There is no installer and no system install, deliberately: the app looks for its
 catalog at `catalog/` **beside the executable** (`catalogDir()` is
 `exeDir()/catalog`), so it is a portable directory rather than something that
-belongs in `/usr/bin`. The Linux equivalent of the Windows `FwOGExplorerV1.zip`
+belongs in `/usr/bin`. The Linux equivalent of the Windows `FwOGExplorerV2.zip`
 is the same layout in a tarball:
 
 ```
-FwOGExplorerV1-linux-x86_64/
+FwOGExplorerV2-linux-x86_64/
 ├── fwOGAppExplorer
-├── catalog/                        # sample app UF2s; the tab picks up anything here
+├── fwogcli
+├── catalog/                        # empty; the tab picks up any .uf2 dropped here
 ├── 60-fwog-app-explorer.rules      # optional, see Device permissions
 ├── fwOGAppExplorer.desktop         # optional, see The .desktop file
 └── fwOGAppExplorer.png             # the icon that .desktop names
 ```
 
 ```sh
-mkdir -p FwOGExplorerV1-linux-x86_64/catalog
-cp build/linux-gcc-release/fwOGAppExplorer packaging/* FwOGExplorerV1-linux-x86_64/
-tar czf FwOGExplorerV1-linux-x86_64.tar.gz FwOGExplorerV1-linux-x86_64
+mkdir -p FwOGExplorerV2-linux-x86_64/catalog
+cp build/linux-gcc-release/fwOGAppExplorer build/linux-gcc-release/fwogcli \
+   packaging/* FwOGExplorerV2-linux-x86_64/
+tar czf FwOGExplorerV2-linux-x86_64.tar.gz FwOGExplorerV2-linux-x86_64
 ```
 
 The three `packaging/` files are all optional at run time. They travel in the
 tarball so that somebody who downloads only the tarball already has everything
 that "Device permissions" above and "The `.desktop` file" below tell them to
-install. `catalog/` is the only part that has to be filled in by hand.
+install. `catalog/` ships empty on both platforms as of v2 — the remote catalog
+is what fills the list on first launch, so nothing has to be bundled and the
+same app no longer appears twice once the fetch lands.
 
-**The build does not produce this, on purpose.** A `cmake --install` or CPack
-target could assemble everything except the one thing that makes it a release:
-the sample UF2s in `catalog/` are excluded from git (`.gitignore` has
-`catalog/*.uf2`, for the same reason `firmware/*.uf2` is excluded), so a
-packaging target would still need the same manual step and would only look like
-it had automated it. The Windows zip is assembled by hand for the same reason,
-and one platform quietly acquiring a different release process is how the two
-stop matching.
+**The build still does not produce this**, and since v2 that is only because
+nothing has automated it — not because it cannot be. The old reason was that
+`catalog/*.uf2` is excluded from git (for the same reason `firmware/*.uf2` is),
+so any packaging target would still have needed a manual copy and would only
+have looked like it had automated it. With an empty `catalog/` that argument is
+gone: the layout above is the build output plus `packaging/` plus one `mkdir`.
+The Windows zip is assembled by the same three steps by hand, and if one
+platform ever gets a packaging target the other should get it in the same
+change — two release processes that drift is how the two stop matching.
 
 ### The `.desktop` file
 
