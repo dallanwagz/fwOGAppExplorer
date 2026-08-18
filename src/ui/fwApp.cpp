@@ -49,7 +49,7 @@ namespace {
 // Declared up here rather than beside the tab-bar loop because loadSettings()
 // clamps a restored lastTab against kTabCount, and that runs long before the
 // loop does.
-constexpr const char* kTabLabels[] = { "App Explorer", "Default Firmware", "Recovery", "Settings" };
+constexpr const char* kTabLabels[] = { "App Explorer", "OG Bootloader Installer", "Recovery", "Settings" };
 constexpr int kTabCount = int(std::size(kTabLabels));
 
 // ---------------------------------------------------------------------------

@@ -20,7 +20,7 @@ running the app and **a display that never comes up**.
 
 It is a one-time, per-board install, and this app does it for you:
 
-> **Default Firmware tab → "FreeWili 1-OG Display Bootloader"**
+> **OG Bootloader Installer tab → "Install FreeWili OG Bootloader"**
 
 Do that once. After that, every OG app is a single file and a single click.
 
@@ -58,7 +58,7 @@ serial-port permissions usually need a one-time setup step.
 | Tab | Purpose |
 |---|---|
 | **App Explorer** | **The main event: load OG apps.** Browse the catalog — embedded, a local `catalog/` folder, or a remote `apps.json` URL — and flash any app in one click. Requires the display bootloader (above). |
-| **Default Firmware** | **Install the OG display bootloader here first.** Also restores the original (deprecated) FreeWili 1 firmware, or erases either CPU. |
+| **OG Bootloader Installer** | **Install the OG display bootloader here first.** Its Danger zone also erases either CPU, or restores the deprecated OLD FreeWili 1 firmware. |
 | **Recovery** | Documentation for getting a board back when it will not enumerate. |
 | **Settings** | Theme, remote catalog URL, window state. |
 

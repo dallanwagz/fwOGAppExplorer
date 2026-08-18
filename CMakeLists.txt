@@ -9,7 +9,7 @@ project(fwOGAppExplorer VERSION 1.0.0 LANGUAGES C CXX)
 # the two answer different questions. PROJECT_VERSION is semver for the build,
 # and this is what a user should call the thing they are looking at. Bump it to
 # "v1.1" or "v2" here and the title follows.
-set(FWOG_DISPLAY_VERSION "v1")
+set(FWOG_DISPLAY_VERSION "v2")
 
 # MSYS2's gcc precedes MSVC on some machines' PATH, so CMake can silently
 # select GCC for a preset named "msvc" -- which quietly drops the static-CRT
