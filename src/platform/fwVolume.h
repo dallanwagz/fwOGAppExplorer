@@ -58,9 +58,26 @@ std::optional<MountLine> parseMountLine(std::string_view line);
 /// Board-ID, and must not be offered as a FreeWili to write to.
 bool isRp2BootromInfo(std::string_view infoUf2Txt);
 
+/// Which mount tooling the remedy half of unmountedBootselNotice() should
+/// name. A value rather than an #ifdef inside the function, so both wordings
+/// compile and are tested on every platform; kNativeMountRemedy below is the
+/// one decision point that picks per-OS.
+enum class MountRemedy { Udisks, Diskutil };
+
+/// The remedy this build's OS can actually follow. macOS has no udisksctl and
+/// no lsblk; Linux has no diskutil. (Windows never shows the notice --
+/// countBootselDevices() answers 0 there -- so its value is moot.)
+inline constexpr MountRemedy kNativeMountRemedy =
+#if defined(__APPLE__)
+    MountRemedy::Diskutil;
+#else
+    MountRemedy::Udisks;
+#endif
+
 /// Explain BOOTSEL devices that no mounted volume accounts for; empty when
 /// there is nothing to explain. Pure, so the wording is tested directly.
-std::string unmountedBootselNotice(int bootselDevices, size_t volumesFound);
+std::string unmountedBootselNotice(int bootselDevices, size_t volumesFound,
+                                   MountRemedy remedy = kNativeMountRemedy);
 
 /// Decode `/proc/mounts`' octal escaping of space, tab, newline and
 /// backslash (`\040`, `\011`, `\012`, `\134`). Pure, so it is testable on

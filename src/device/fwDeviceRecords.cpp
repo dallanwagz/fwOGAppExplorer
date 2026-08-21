@@ -24,6 +24,19 @@ std::optional<CpuPortRecord> usbDeviceToRecord(UsbKind kind,
         // (still enumerating, or no letter assigned) tells us nothing usable.
         if (volume.empty()) return std::nullopt;
 
+        // fwfinder's macOS backend answers "/dev/diskN" -- the raw disk, not a
+        // mount point -- while diskutil has not yet reported where (or
+        // whether) the volume mounted. That is the same "tells us nothing
+        // usable" state as an empty volume, but spelled so that it used to
+        // pass the emptiness check and flow into classifyVolumes(), where it
+        // string-matches no real mount and turns a hub-resolved drive into a
+        // ForeignMounted refusal -- or, under fwogcli --yes, into a write that
+        // skipped the very guard the classification exists to apply. A device
+        // node is never something to copy a file into, on any platform this
+        // builds for, so refuse it here the same way an unknown hub port is
+        // refused: say nothing rather than guess.
+        if (volume.rfind("/dev/", 0) == 0) return std::nullopt;
+
         // An unrecognised hub port is left unattributed rather than guessed.
         // This is the whole safety property of the structural pass: it says
         // where a CPU is or it says nothing, and a drive on some port that is

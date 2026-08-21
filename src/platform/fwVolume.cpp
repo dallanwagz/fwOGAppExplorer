@@ -165,7 +165,8 @@ bool isRp2BootromInfo(std::string_view infoUf2Txt)
     return false;
 }
 
-std::string unmountedBootselNotice(int bootselDevices, size_t volumesFound)
+std::string unmountedBootselNotice(int bootselDevices, size_t volumesFound,
+                                   MountRemedy remedy)
 {
     // Nothing to explain unless a CPU is sitting in the bootrom that no mounted
     // volume accounts for.
@@ -206,6 +207,27 @@ std::string unmountedBootselNotice(int bootselDevices, size_t volumesFound)
                   " CPUs are in BOOTSEL but their RPI-RP2 drives are not mounted, so "
                   "there is nothing to copy to. This app writes a UF2 as a FILE and "
                   "cannot mount the drives itself.";
+
+    // The macOS wording exists because this state is REACHABLE there by the
+    // app's own hand: copyToVolume()'s mac arm unmounts the volume before it
+    // writes, so a copy the bootrom never consumed (a foreign UF2 dropped in
+    // by hand, say) leaves the device attached with its drive mounted nowhere
+    // -- a state Linux and Windows never enter on their own. The by-name
+    // collapsing hazard is the same on both: `diskutil mount RPI-RP2` picks
+    // one of the identically-labelled drives just as by-label does.
+    if (remedy == MountRemedy::Diskutil) {
+        if (bootselDevices == 1)
+            return situation + " Mount it and try again -- for example: "
+                               "diskutil mount RPI-RP2";
+        return situation +
+               " Mount it and try again: run diskutil list to find each drive's "
+               "disk identifier (an external DOS_FAT volume named RPI-RP2), then "
+               "diskutil mount /dev/<identifier>. Do not mount by the name "
+               "RPI-RP2 here -- " +
+               std::to_string(bootselDevices) +
+               " drives carry that same name, so it picks just one of them at "
+               "random.";
+    }
 
     if (bootselDevices == 1)
         return situation + " Mount it and try again -- for example: udisksctl mount -b "
@@ -388,6 +410,16 @@ void callback(DADiskRef, DADissenterRef dissenter, void* ctx)
 /// FAT volume over full-speed USB moves ~1 MB/s, so a tight budget would turn
 /// the largest legitimate image into a spurious failure; the deadline exists
 /// only so a wedged diskarbitrationd cannot park the flash worker forever.
+///
+/// Recorded, not fixed: the remount waits in remountNoBrowse() reuse this
+/// writeback-sized budget though a mount implies no writeback, so a truly
+/// wedged diskarbitrationd can hold one copy step for several deadlines in a
+/// row (and FlashController's cooperative cancel never reaches these loops).
+/// Shortening those waits is a tuning question for a machine that exhibits
+/// the wedge, not something to guess at from a healthy one. Note for any
+/// future refactor: on timeout the pending callback still holds a pointer to
+/// the caller's stack Result -- safe today only because the session is
+/// unscheduled, released and never pumped again on this thread.
 constexpr CFAbsoluteTime kDaVerdictDeadlineSec = 120.0;
 
 /// Pump the scheduled run loop until the callback lands or the deadline
@@ -580,8 +612,18 @@ std::expected<void, std::string> flushToDevice(const std::filesystem::path& file
 #endif
     const int fsyncErrno = errno;
     ::close(fd);
-    if (rc != 0 && !vanished(fsyncErrno))
+    if (rc != 0 && !vanished(fsyncErrno)) {
+        // vanished()'s errno set was measured on Linux; which errno macOS's
+        // msdos surfaces when the bootrom detaches mid-F_FULLFSYNC was not,
+        // and EIO is at least as likely there. EIO from a device that is
+        // still present is a genuine failure though, so rather than widen the
+        // set to an ambiguous errno, ask the question the set approximates:
+        // if the destination itself is gone, the device left, and gone means
+        // finished for the same reason as everywhere else in this function.
+        std::error_code gone;
+        if (!std::filesystem::exists(file, gone) && !gone) return {};
         return std::unexpected(std::strerror(fsyncErrno));
+    }
 
     // The directory entry, best-effort. A FAT directory whose entry has not
     // been written yet leaves a file the bootrom cannot see, but a failure to
@@ -651,8 +693,18 @@ std::vector<std::string> findRpiRp2Volumes()
         // This runs in the flash worker's ~250ms poll loop, and a stalled
         // network mount must not be allowed to hold that loop up just to
         // refresh size fields nothing here reads.
+        //
+        // getmntinfo_r_np, NOT getmntinfo: the plain call hands back a pointer
+        // into one process-wide static allocation that every call from any
+        // thread reallocs and overwrites -- and this lambda IS called from two
+        // threads at once on every flash (the Recovery tab's poll on the UI
+        // thread at 500ms, the flash/probe worker at 250ms). Torn strings or a
+        // read of freed memory mid-flash is the price of the convenient
+        // spelling; the _r_np variant allocates a fresh array the caller
+        // frees, which is the same getpwuid_r-over-getpwuid reasoning
+        // fwPaths.cpp already recorded.
         struct statfs* mounts = nullptr;
-        const int n = ::getmntinfo(&mounts, MNT_NOWAIT);
+        const int n = ::getmntinfo_r_np(&mounts, MNT_NOWAIT);
         std::string out;
         for (int i = 0; i < n; ++i) {
             out += detail::escapeMount(mounts[i].f_mntfromname);
@@ -662,6 +714,7 @@ std::vector<std::string> findRpiRp2Volumes()
             out += mounts[i].f_fstypename;   // kernel identifier, never escaped
             out += " - 0 0\n";
         }
+        ::free(mounts);                      // _r_np's contract: caller frees
         return out;
     };
 #else
@@ -787,6 +840,25 @@ std::expected<void, std::string> copyToVolume(const std::filesystem::path& src,
     // browsable mount; the cost is the notification, never the flash.
     std::string targetVolume = volume;
     if (auto nb = remountNoBrowse(volume)) targetVolume = *nb;
+
+    // remountNoBrowse() unmounts before anything is written, which revokes
+    // this function's own precondition by its own hand: if both its remounts
+    // then fail AND a non-DA-owned /Volumes/RPI-RP2 directory survives the
+    // unmount (diskarbitrationd removes only mount-point directories it
+    // created), the path above is now a plain directory on the boot volume --
+    // and the copy below would put the image on the internal disk, pass the
+    // size check, and report a flash that never reached a board: the exact
+    // failure this file's comments call the worst one. So ask the filesystem
+    // directly: the target must still BE a mount point, of a FAT volume.
+    {
+        struct statfs sfs{};
+        if (::statfs(targetVolume.c_str(), &sfs) != 0 ||
+            targetVolume != sfs.f_mntonname ||
+            std::string_view(sfs.f_fstypename) != "msdos")
+            return std::unexpected(targetVolume +
+                                   " is no longer a mounted RPI-RP2 volume -- "
+                                   "refusing to write the image anywhere else");
+    }
 #else
     const std::string& targetVolume = volume;
 #endif
@@ -843,7 +915,7 @@ std::expected<void, std::string> copyToVolume(const std::filesystem::path& src,
     // fsync'ing the former is the classic half of this recipe that people get
     // wrong.
     if (auto flushed = flushToDevice(dst); !flushed)
-        return std::unexpected("could not flush the image to " + volume + ": " +
+        return std::unexpected("could not flush the image to " + targetVolume + ": " +
                                flushed.error());
 #endif
 

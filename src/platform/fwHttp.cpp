@@ -291,9 +291,17 @@ const Curl& curl()
         // /usr/lib/libcurl.4.dylib ships with macOS itself (dyld shared cache;
         // no file on disk since Big Sur, but dlopen resolves it regardless), so
         // unlike Linux the "libcurl absent" arm should be unreachable in
-        // practice. The fallback spelling covers a Homebrew-only environment
-        // where someone has pointed DYLD_LIBRARY_PATH at an unversioned lib.
-        for (const char* name : { "libcurl.4.dylib", "libcurl.dylib" }) {
+        // practice. The ABSOLUTE path is deliberate and load-bearing: a
+        // slash-less dlopen on macOS searches DYLD_LIBRARY_PATH and the
+        // CURRENT WORKING DIRECTORY before the fallback path -- and v2 fetches
+        // the remote catalog at first launch with no user action, so a bare
+        // (un-hardened) binary started from a directory holding a planted
+        // libcurl.4.dylib would load and run it. Linux never searches CWD,
+        // which is why the leaf spelling is safe below but not here. The leaf
+        // fallbacks remain for a hypothetical system without the shared-cache
+        // path -- by then CWD planting is the least of that machine's oddness.
+        for (const char* name : { "/usr/lib/libcurl.4.dylib",
+                                  "libcurl.4.dylib", "libcurl.dylib" }) {
 #else
         for (const char* name : { "libcurl.so.4", "libcurl.so", "libcurl.so.3" }) {
 #endif
