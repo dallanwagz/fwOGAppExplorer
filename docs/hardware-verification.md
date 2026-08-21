@@ -679,3 +679,63 @@ platform arms as this branch ships them (getmntinfo_r_np mount scan, the
 statfs re-proof before the copy, the DiskArbitration unmount-before-write).
 Run through `fwogcli`; the GUI drives the identical engine, and the GUI
 end-to-end flash remains the 2026-08-14 entry's evidence.
+
+## 2026-08-14 — iPadOS: flashing from the iPad (VERIFIED, pre-v2 code)
+
+The iOS port's board pass, run on an iPad Pro (M4) against the same FreeWili
+1-OG. This entry is written from that session's commit record (`feat(ios):
+Pocket Wili Phase 2`), which carries the measurements; the ledger gained its
+iOS sections later, in the rebase.
+
+The field flow, verified end to end twice (the second run clean), including
+the remote-catalog download feeding the write: grant the `RPI-RP2` folder
+once through the document picker, then every flash is hold-the-red-button,
+plug in, tap Flash, type `MAIN`. Measured along the way:
+
+- The security-scoped bookmark survives replug — one grant serves every
+  subsequent flash, which is what makes the flow livable at all.
+- **11.6 MB/s** writes through the granted folder — the copy is not the
+  bottleneck the sandbox might suggest.
+- Two field bugs, both found only by flashing and both fixed with the
+  measurement in the code: the stub finder never stamped a completed scan
+  (the freshness gate refused a board being re-checked every frame), and
+  iPadOS surfaces writes to the vanished bootrom volume as `EIO` — the
+  first flash **succeeded on the board while reporting "Input/output
+  error"**, which is the worst kind of wrong and is why the
+  gone-means-accepted rule exists on this platform.
+
+Not run on iPadOS in that pass: anything touching a DISPLAY-CPU step (no
+serial means no way to park the DISPLAY CPU; the app refuses those plans up
+front), the recovery flows, and two boards at once.
+
+## 2026-08-21 — iPadOS, rebased onto v2 (build, suite and review re-verified; iPad flash NOT re-run)
+
+The iOS branch was cherry-picked onto the rebased macOS branch — so
+everything the macOS 2026-08-21 entries say about v2's rewritten flash
+sequencing applies here too, plus one thing specific to this port: **the
+iPad board pass above ran on pre-v2 code.** What has been re-established on
+the rebased branch, this machine, 2026-08-21:
+
+- Both mac presets configure, build and link **warning-clean**; `ctest`
+  green on both: **591 cases / 2346 assertions** (the count grew in this
+  branch: eleven new cases cover the serial-less engine arm, the
+  vanished-volume rule and the DISPLAY refusal — paths the pre-rebase port
+  could not test at all, because they hid behind compile-time platform
+  constants; they are runtime seams now).
+- `ios-release` (Xcode generator, arm64 device) configures, **builds and
+  signs** — both Objective-C++ files now compiled under ARC, which the
+  adversarial review found they were written for but never getting.
+- A five-dimension adversarial review of the port against v2, every finding
+  independently re-verified before acceptance: eleven defects, fixed in one
+  commit (`fix(ios): eleven defects…`), including two that would have
+  reached an iPad user's hands — twenty port-flavoured silent seconds
+  before the red-button instruction, and a successful flash misreported as
+  a failure by its final size check.
+
+Not re-run against v2, because the iPad was not driven from this session:
+**any flash from the device**. The engine arm the iPad exercises is now
+walked by the desktop suite through the `serialSupportAvailable` seam —
+arrival, confirmation, ambiguity, timeout, cancellation — but this ledger
+records runs, not reasoning: the first post-rebase iPad flash belongs in a
+new dated section here, exactly as the macOS rebase entry demanded of its
+own flash before its claims were allowed to stand.

@@ -590,8 +590,10 @@ ctest  --preset mac-clang-release
 Measured here: Apple clang 21.0.0 (clang-2100.1.1.101), arm64, macOS 26.6
 (SDK 26.5), CMake 4.4.2, Ninja 1.13.2. The build **configures, builds and
 links without complaint** — warning-clean, both `mac-clang-release` and
-`mac-clang-debug` — and the complete test suite passes: **580 cases / 2337
-assertions**. `fwogcli` builds and runs from the same presets.
+`mac-clang-debug` — and the complete test suite passes: **591 cases / 2346
+assertions** (the iOS port below grew the suite: its serial-less flash paths
+are runtime seams, tested from the desktop). `fwogcli` builds and runs from
+the same presets.
 
 Output lands in `build/mac-clang-release/`. `freewili-finder` has a native IOKit
 backend, so unlike Linux there is no `libudev` equivalent to install — the USB
@@ -702,6 +704,109 @@ hardware), and both CPUs re-enumerating as the new app.
   (`LSMinimumSystemVersion` in `make_mac_app.sh`), and every API the port
   uses predates that by years — but 12.0 is a declaration, not a measurement,
   for the same reason the Linux section's glibc floor is one.
+
+## iOS / iPadOS
+
+The app builds, signs and runs on iPadOS and iPhone — one binary, two
+arrangements — and **has flashed a real board from an iPad**: grant the
+`RPI-RP2` folder once, then every flash is hold-the-red-button, plug in, tap
+Flash, type `MAIN`. What that claim rests on, and its caveats, is spelled out
+in [What is and is not verified on iPadOS](#what-is-and-is-not-verified-on-ipados)
+at the end of this section.
+
+### Building for iOS
+
+Requires Xcode (the preset uses the Xcode generator; automatic signing needs
+a development team, supplied as the `FWOG_IOS_DEV_TEAM` cache variable rather
+than hard-coded — the shipped preset carries one team id, override it with
+your own):
+
+```sh
+cmake --preset ios-release
+cmake --build --preset ios-release
+```
+
+Three things the desktop builds have are deliberately absent here, each for a
+stated reason: **`freewili-finder`** (its Apple backend is IOKit, which is
+not public API on iOS — `fwFinderAvailable.h` is the one statement of where
+the library exists, and the finder manager compiles its no-op stub, same as
+the web); **`fwogcli`** (it needs USB/serial, and a device has no shell to
+run a console executable from); and **the test target** (the suite runs on
+the host platforms — and the port's own logic does not hide from it, see
+below).
+
+### What the port consists of
+
+- **HTTP without libcurl**: iOS ships no public libcurl for `fwHttp.cpp` to
+  `dlopen`, so an NSURLSession transport (`fwHttpNSURL.mm`) sits behind the
+  same `httpGet()` contract — same redirect policy, same 10-hop cap.
+- **The mount table's role is played by a granted folder**
+  (`fwVolumeGrant.mm`): a one-time document-picker grant of the `RPI-RP2`
+  volume, persisted as a security-scoped bookmark that survives replug.
+  `findRpiRp2Volumes()` verifies the granted folder's `INFO_UF2.TXT` exactly
+  as every other platform verifies a mount.
+- **The user is the touch**: with no serial port to reboot a CPU at 1200
+  baud, the engine's unidentified-CPU arm becomes a wait for the drive the
+  user raises by hand (red button held while plugging in), with the typed
+  confirmation kept as the guard. Any plan with a DISPLAY-CPU step is
+  refused up front — the DISPLAY CPU has no BOOTSEL button, and without
+  serial this app cannot reboot it.
+- **A compact layout below 700 points** of viewport width: the two panes
+  become a two-screen stack, paddings grow to touch size, the tab bar
+  scrolls. One bit of per-frame geometry (`fwUiScale.h`) forks the
+  arrangement; nothing behavioral differs per layout.
+- **Serial-less logic is tested from the desktop.** Serial availability is a
+  datum on the engine's injected I/O (`FlashIo`) and a parameter to the
+  catalog filter, not a compile-time fork — the suite walks the iPad's
+  arrival/confirmation/ambiguity/timeout/cancellation paths on every
+  platform the tests build for.
+
+### Where things land
+
+The catalog folder is the app sandbox's `Documents/` directory, surfaced in
+the Files app (`UIFileSharingEnabled` + `LSSupportsOpeningDocumentsInPlace`)
+— so "drop a UF2 in the folder" survives the sealed bundle. Settings go to
+the sandbox's Application Support, by the same `fwPaths.cpp` conventions as
+everywhere else.
+
+### TestFlight
+
+`xcodebuild archive` + `-exportArchive` (method `app-store`, destination
+`upload`) works end to end from the CMake-generated project; a build has
+been accepted on App Store Connect. The three things that stood between a
+dev build and an accepted upload (a non-generic archive via
+`SKIP_INSTALL=NO`, an actool-compiled 1024px alpha-flattened `AppIcon` with
+`CFBundleIconName` stated explicitly, and
+`ITSAppUsesNonExemptEncryption=false`) are recorded in
+`packaging/ios/` and the commit that fixed them.
+
+### What is and is not verified on iPadOS
+
+**Verified against the real board** (iPad Pro M4 + FreeWili 1-OG,
+2026-08-14): the full field flow, end to end, twice — folder grant, bookmark
+surviving replug, the remote-catalog download feeding the write, 11.6 MB/s
+through the granted folder, and both field bugs that pass surfaced fixed
+with the measurement in the code. Dated entries are in
+[`docs/hardware-verification.md`](docs/hardware-verification.md).
+
+**Dates matter here, so:** that iPad pass ran on the pre-v2 codebase. On the
+rebased branch, what has been re-established is the board-free evidence —
+warning-clean builds (both mac presets and the signed `ios-release` device
+build, its Objective-C++ under ARC), the grown suite green (**591 cases /
+2346 assertions**, eleven of them walking the serial-less engine paths
+through the runtime seams), and a five-dimension adversarial review of the
+port against v2 with every finding independently verified and fixed.
+
+**Not verified:**
+
+- **Any flash from the iPad on the rebased build.** The engine arm the iPad
+  exercises is walked by the desktop suite; the ledger records runs, not
+  reasoning, and the first post-rebase iPad flash belongs in a new dated
+  ledger entry — exactly the discipline the macOS section held itself to.
+- Anything touching a DISPLAY-CPU step (refused up front on this platform),
+  the recovery flows, and two boards at once.
+- iPhone hardware: the compact layout's thresholds were sized against real
+  device metrics, but every board flash so far has been from the iPad.
 
 ## Hardware verification status
 
