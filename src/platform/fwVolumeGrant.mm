@@ -190,8 +190,10 @@ std::string statusDescription()
     // its own. The real computation is disk I/O, which does not belong on a
     // frame, so two throttles gate it: recompute at most every 500 ms, and
     // only when g_mutex is free. The try_to_lock is not optional -- the
-    // flash worker can hold g_mutex for the duration of a write, and a
-    // blocking lock here would freeze frames for exactly that long.
+    // flash worker takes g_mutex in grantedVolumePath() for each bookmark
+    // resolve and reachability check, and on a dying mount a single
+    // reachability stat can stall for seconds; a blocking lock here would
+    // freeze frames for exactly that long.
     static std::string cached = "checking drive grant...";
     static std::chrono::steady_clock::time_point lastRefresh{};
     const auto now = std::chrono::steady_clock::now();

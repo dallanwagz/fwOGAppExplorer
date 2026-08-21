@@ -92,8 +92,12 @@ std::expected<std::string, std::string> nsurlHttpGet(const std::string& url)
                         result = std::unexpected("the server returned HTTP " +
                                                  std::to_string(status));
                     } else {
-                        result = std::string(
-                            static_cast<const char*>(data.bytes), data.length);
+                        // data.bytes is nil for an empty 2xx body, and
+                        // std::string(nullptr, 0) is formally UB.
+                        result = data.length
+                            ? std::string(static_cast<const char*>(data.bytes),
+                                          data.length)
+                            : std::string();
                     }
                 }
                 dispatch_semaphore_signal(done);

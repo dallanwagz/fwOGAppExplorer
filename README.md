@@ -682,7 +682,7 @@ and stapled. Timings and serials are in
 this branch was then rebased onto v2 — which rewrote the flash sequencing
 (`fwFlashPrep`) and the catalog around the same platform code. The rebase was
 re-verified in two stages, both in the ledger: first the board-free evidence
-(warning-clean build on both presets, the full suite — **580 cases / 2337
+(warning-clean build on both presets, the full suite — **580 cases / 2317
 assertions** — `fwogcli` on an empty bus, the `.app` packaging, a first-launch
 remote-catalog fetch over the `dlopen`ed libcurl), and then **the flash was
 re-run against v2's sequencing on the same board**: `fwogcli flash` — its

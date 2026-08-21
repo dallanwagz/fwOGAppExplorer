@@ -631,7 +631,7 @@ What a pass believed at the time is part of the record, so, explicitly:
 Re-verified on the rebased branch, this machine, 2026-08-21:
 
 - `mac-clang-release` and `mac-clang-debug` both configure, build and link
-  **warning-clean**; `ctest` green on both: **580 cases / 2337 assertions**.
+  **warning-clean**; `ctest` green on both: **580 cases / 2317 assertions**.
 - `fwogcli` — its first macOS build ever — decodes the embedded entries
   (`entries`) and walks the empty bus without error (`list`, no board
   attached).

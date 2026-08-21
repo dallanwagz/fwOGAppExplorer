@@ -7,6 +7,11 @@
 #include <imgui.h>
 #include <IconsMaterialDesign.h>
 
+#if defined(__APPLE__)
+  // Included explicitly rather than trusted to arrive through fwTypes.h --
+  // TARGET_OS_OSX silently evaluates as 0 if the header is missing.
+  #include <TargetConditionals.h>
+#endif
 #if defined(__APPLE__) && !TARGET_OS_OSX
   #include "platform/fwVolumeGrant.h"   // the grant button below
 #endif

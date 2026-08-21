@@ -33,7 +33,11 @@ ARCHIVE="$BUILD_DIR/fwog.xcarchive"
 cmake --preset ios-release -DFWOG_IOS_BUILD_NUMBER="$BUILD_NUMBER" \
       -DFWOG_IOS_DEV_TEAM="$TEAM_ID"
 
-rm -rf "$ARCHIVE" "$BUILD_DIR/export-upload"
+# Release-iphoneos also goes: a prior archive leaves dangling symlinks there
+# (into DerivedData ArchiveIntermediates) that make the next incremental
+# device build fail on a bare MkDir. Removing it costs a rebuild this script
+# was going to pay anyway.
+rm -rf "$ARCHIVE" "$BUILD_DIR/export-upload" "$BUILD_DIR/Release-iphoneos"
 xcodebuild -project "$BUILD_DIR/fwOGAppExplorer.xcodeproj" \
            -scheme fwOGAppExplorer -configuration Release \
            -destination 'generic/platform=iOS' \
@@ -53,7 +57,8 @@ fi
 mkdir -p "$ARCHIVE/dSYMs"
 cp -R "$DSYM" "$ARCHIVE/dSYMs/"
 
-EXPORT_PLIST=$(mktemp -t fwog-export).plist
+EXPORT_TMP=$(mktemp -t fwog-export)
+EXPORT_PLIST="$EXPORT_TMP.plist"
 cat > "$EXPORT_PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -71,6 +76,6 @@ EOF
 xcodebuild -exportArchive -archivePath "$ARCHIVE" \
            -exportOptionsPlist "$EXPORT_PLIST" \
            -exportPath "$BUILD_DIR/export-upload" -allowProvisioningUpdates
-rm -f "$EXPORT_PLIST"
+rm -f "$EXPORT_PLIST" "$EXPORT_TMP"
 
 echo "Uploaded build $BUILD_NUMBER. It appears in App Store Connect after processing."
