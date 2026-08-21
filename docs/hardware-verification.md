@@ -647,3 +647,35 @@ rebase time: **any flash**. The platform arms v2's `fwFlashPrep` calls into
 are byte-for-byte the ones the 2026-08-14 pass exercised, but this ledger
 records runs, not reasoning — the first post-rebase flash belongs in a new
 dated section here.
+
+## 2026-08-21 — macOS: the post-rebase flash, run (VERIFIED, v2 code)
+
+The section above ends by saying the first post-rebase flash belongs in a new
+dated section. This is that section, run the same day against the branch tip
+(the build the PR ships), board FW4300 attached to the same arm64 Mac -- MAIN
+chip `E4622890471F4734`, DISPLAY chip `E4622890474B4434`.
+
+The flow: `fwogcli flash ogvegas_main.uf2` -- v2's own front-end, its first
+board flash ever driven from macOS -- with the image downloaded from the
+published catalog (`docs.freewili.com/og-apps/uf2/ogvegas_main.uf2`, sha256
+and size verified against `apps.json` before use; `fwogcli info` decoded its
+embedded DISPLAY half first). Starting state: both CPUs running, display
+bootloader present.
+
+What v2's sequencing did on macOS, observed step by step: the prep parked the
+DISPLAY CPU in BOOTSEL (its drive auto-mounted at `/Volumes/RPI-RP2`), MAIN
+was touched at 1200 baud, and MAIN's drive mounted at **`/Volumes/RPI-RP2 1`**
+-- both bootrom volumes mounted simultaneously, which means the
+space-in-the-mount-path spelling escapeMount() exists for was exercised on
+real hardware, not just in its round-trip test. The copy wrote to the
+space-named volume; 24.8 s port-to-port for the 1,049,088-byte image. Both
+CPUs re-enumerated as the new app -- IO registry product strings
+`FWOG main ogvegas 001` and `FWOG display ogvegas 001` -- and the display
+bootloader still reports present.
+
+So the one caveat the two sections above carried is closed: the flash path has
+now been run against v2's `fwFlashPrep` sequencing on macOS, through the
+platform arms as this branch ships them (getmntinfo_r_np mount scan, the
+statfs re-proof before the copy, the DiskArbitration unmount-before-write).
+Run through `fwogcli`; the GUI drives the identical engine, and the GUI
+end-to-end flash remains the 2026-08-14 entry's evidence.

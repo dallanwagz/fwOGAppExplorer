@@ -676,26 +676,27 @@ re-enumerating with the new app's product strings. The signed `.app` notarized
 and stapled. Timings and serials are in
 [`docs/hardware-verification.md`](docs/hardware-verification.md).
 
-**One caveat, stated because dates matter here:** that board pass ran on the
-pre-v2 codebase. This branch was then rebased onto v2 — which rewrote the
-flash sequencing (`fwFlashPrep`) and the catalog around the same platform
-code — and after the rebase the evidence re-gathered so far is: the
-warning-clean build on both presets, the full suite (580 cases / 2337
-assertions), `fwogcli` enumerating with no board attached, the `.app`
-packaging, and a first-launch remote-catalog fetch over the `dlopen`ed
-libcurl. **A board flash has not yet been re-run on the rebased build.** The
-platform arms v2 calls into are the ones the board pass exercised, but per
-this repo's own rule that is a reason to expect success, not evidence of it.
+**Dates matter here, so:** that board pass ran on the pre-v2 codebase, and
+this branch was then rebased onto v2 — which rewrote the flash sequencing
+(`fwFlashPrep`) and the catalog around the same platform code. The rebase was
+re-verified in two stages, both in the ledger: first the board-free evidence
+(warning-clean build on both presets, the full suite — **580 cases / 2337
+assertions** — `fwogcli` on an empty bus, the `.app` packaging, a first-launch
+remote-catalog fetch over the `dlopen`ed libcurl), and then **the flash was
+re-run against v2's sequencing on the same board**: `fwogcli flash` — its
+first board flash ever driven from macOS — with an image downloaded and
+hash-verified from the published catalog, both bootrom volumes mounted at once
+(`/Volumes/RPI-RP2` and `/Volumes/RPI-RP2 1`, the space case, on real
+hardware), and both CPUs re-enumerating as the new app.
 
 **Not verified:**
 
-- **A post-rebase board flash** — the caveat above, kept in this list until it
-  is done.
 - The display-bootloader install and `LegacyDirect` restore flows (the attached
   board already had its bootloader), the CPU-prober recovery flow, and two
   boards at once.
-- `fwogcli` against a live board on macOS (it has enumerated the empty bus and
-  decoded the embedded entries; it has not driven a flash here).
+- The GUI flash **on the rebased build** — the post-rebase flash above went
+  through `fwogcli`, which drives the identical engine; the GUI's own
+  end-to-end run is the 2026-08-14 (pre-rebase) evidence.
 - **Any other machine.** Everything here is one arm64 Mac; no Intel build has
   been run. The bundle declares macOS 12.0 as its floor
   (`LSMinimumSystemVersion` in `make_mac_app.sh`), and every API the port
