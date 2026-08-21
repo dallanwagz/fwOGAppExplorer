@@ -362,6 +362,13 @@ std::vector<std::string> selectRpiRp2Volumes(const VolumeIo& io)
     return out;
 }
 
+bool vanishedOpIsCompletedFlash(bool infoUf2Present, const std::error_code& probeError)
+{
+    // An errored probe is a gone volume, not an unanswered question -- the
+    // header's comment carries the argument.
+    return probeError || !infoUf2Present;
+}
+
 } // namespace detail
 
 namespace {
@@ -905,8 +912,9 @@ std::expected<void, std::string> copyToVolume(const std::filesystem::path& src,
     // drive still mounted -- reported as the failure it is.
     const auto volumeVanished = [&targetVolume] {
         std::error_code probeEc;
-        return !std::filesystem::exists(
+        const bool present = std::filesystem::exists(
             std::filesystem::path(targetVolume) / "INFO_UF2.TXT", probeEc);
+        return detail::vanishedOpIsCompletedFlash(present, probeEc);
     };
     if (ec) {
         if (volumeVanished()) return {};
@@ -983,6 +991,11 @@ std::expected<void, std::string> copyToVolume(const std::filesystem::path& src,
         if (dstSize != srcSize)
             return std::unexpected("the copied image is the wrong size; the write did not complete");
     } else if (ec != std::errc::no_such_file_or_directory) {
+#if defined(__APPLE__) && !TARGET_OS_OSX
+        // Same EIO-on-vanish shape a third time: iPadOS reports this size
+        // check on the vanished volume as EIO, not no_such_file_or_directory.
+        if (volumeVanished()) return {};
+#endif
         return std::unexpected("could not verify the written image: " + ec.message());
     }
 

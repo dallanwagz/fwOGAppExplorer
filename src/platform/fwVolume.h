@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace fwog {
@@ -129,6 +130,21 @@ struct VolumeIo {
 /// applies are exactly the ones whose deletion must fail a test. Keeping it
 /// unconditional means those tests run in the Windows CI too.
 std::vector<std::string> selectRpiRp2Volumes(const VolumeIo& io);
+
+/// The iPadOS vanished-volume rule: should an operation that failed on the
+/// bootrom volume be reported as a completed flash? iPadOS's file daemon
+/// surfaces EVERY operation on the vanished volume as EIO -- never the
+/// ENOENT/ENODEV the other platforms' rules key on -- so the failed
+/// operation's own error carries no information and is deliberately not a
+/// parameter. The only trustworthy signal is the probe of the volume's own
+/// INFO_UF2.TXT, and both of its outputs matter: a probe that itself errored
+/// counts as gone, because on the vanished mount the probe draws the same
+/// EIO the rule exists to reinterpret -- reading that error as "inconclusive,
+/// report the failure" would resurrect the exact misreport the rule closes.
+/// Pure and compiled everywhere, so both directions of the decision are
+/// tested; the probe itself, and the only calls, are iOS-only (the
+/// volumeVanished lambda in copyToVolume, fwVolume.cpp).
+bool vanishedOpIsCompletedFlash(bool infoUf2Present, const std::error_code& probeError);
 
 } // namespace detail
 

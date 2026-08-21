@@ -493,3 +493,47 @@ TEST_CASE("an entry with no plan is left to the earlier, better 'no firmware' an
     d.identity = probedAs("G:/", TargetCpu::Main);
     CHECK(flashDisabledReason(e, &d).find("no firmware") != std::string::npos);
 }
+
+// ---------------------------------------------------------------------------
+// Serial capability. kSerialSupportAvailable is a compile-time constant, same
+// shape as the Task 21 platform seam above: a test written only against
+// flashDisabledReason() could assert nothing about the serial-less build's
+// behaviour from a desktop build -- the branch would be dead code.
+// flashDisabledReasonFor() takes the capability as a parameter so both
+// orderings run everywhere.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("without serial support a DISPLAY-reaching entry is refused ahead of the device checks") {
+    DeviceView og; og.isOg = true;
+
+    // The plan touches DISPLAY: refused, naming the DISPLAY CPU and the app
+    // that can do it -- even with a perfectly good OG connected, because no
+    // device changes what a serial-less platform can reboot at 1200 baud.
+    const auto why = flashDisabledReasonFor(true, displayOnlyEntry(), &og,
+                                            /*identityConfirmed=*/true,
+                                            /*serialSupportAvailable=*/false);
+    REQUIRE_FALSE(why.empty());
+    CHECK(why.find("DISPLAY CPU") != std::string::npos);
+    CHECK(why.find("desktop app") != std::string::npos);
+    // ...and ahead of the no-device check, per the header: no cable re-seat
+    // changes what this platform can reach.
+    CHECK(flashDisabledReasonFor(true, displayOnlyEntry(), nullptr,
+                                 /*identityConfirmed=*/true,
+                                 /*serialSupportAvailable=*/false) == why);
+}
+
+TEST_CASE("with serial support the same DISPLAY-reaching entry is not refused for it") {
+    DeviceView og; og.isOg = true;
+    CHECK(flashDisabledReasonFor(true, displayOnlyEntry(), &og,
+                                 /*identityConfirmed=*/true,
+                                 /*serialSupportAvailable=*/true).empty());
+}
+
+TEST_CASE("a MAIN-only entry never triggers the serial-less refusal") {
+    // MAIN has a real BOOTSEL button and needs no serial port, so the plan
+    // falls through to the ordinary checks.
+    DeviceView og; og.isOg = true;
+    CHECK(flashDisabledReasonFor(true, mainOnlyEntry(), &og,
+                                 /*identityConfirmed=*/true,
+                                 /*serialSupportAvailable=*/false).empty());
+}

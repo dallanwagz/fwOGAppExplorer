@@ -35,6 +35,16 @@ struct FlashIo {
     /// to abort (user cancelled). The delay itself belongs to the caller, so
     /// tests run instantly.
     std::function<bool(int intervalMs)> waitTick;
+
+    /// Whether this platform can list and touch serial ports at all. A DATUM
+    /// on the injected I/O rather than a direct read of kSerialSupportAvailable
+    /// inside the engine, for the same reason flashDisabledReasonFor() takes it
+    /// as a parameter (fwCatalogFilter.h): the serial-less arm of
+    /// RefuseUnidentified is real control flow -- a wait, four outcomes and a
+    /// resumable confirmation -- and a compile-time constant would lock it to
+    /// iPadOS builds, where no test suite runs. Production callers leave the
+    /// default; tests flip it to walk the serial-less paths on a desktop.
+    bool serialSupportAvailable = kSerialSupportAvailable;
 };
 
 enum class FlashOutcome {

@@ -476,7 +476,16 @@ FlashResult runFlashPlan(const FlashIo& io,
         GuardAction action = decideAction(state, port.has_value(),
                                           portForCpu(identity, otherCpu(step.cpu)).has_value());
         {
-            const auto isRefusal = [](GuardAction a) {
+            const auto isRefusal = [&io](GuardAction a) {
+                // On a serial-less platform, RefuseUnidentified is not worth
+                // holding for: identify() can never produce a port there, so
+                // twenty seconds of "waiting for the CPU to become reachable"
+                // -- a message about a serial port that cannot exist -- buys
+                // nothing. Fall through immediately to that action's own arm
+                // below, which runs the wait that CAN succeed (a volume
+                // arriving) behind the one instruction that can make it happen.
+                if (!io.serialSupportAvailable && a == GuardAction::RefuseUnidentified)
+                    return false;
                 return a == GuardAction::RefuseUnidentified || a == GuardAction::RefuseWrongCpu
                     || a == GuardAction::RefuseAmbiguous;
             };
@@ -534,7 +543,7 @@ FlashResult runFlashPlan(const FlashIo& io,
             // this is overwhelmingly the step-1 refusal that follows a
             // SUCCESSFUL step 0, and completedStepsNote() spells out what that
             // means. See its comment.
-            if (kSerialSupportAvailable)
+            if (io.serialSupportAvailable)
                 return failStep(FlashOutcome::RefusedUnidentified,
                                 std::string("the ") + cpu + " CPU could not be identified -- no "
                                 "serial port to reboot and no RPI-RP2 drive of its own, for " +
@@ -546,14 +555,19 @@ FlashResult runFlashPlan(const FlashIo& io,
             // red button held while plugging in is what raises the drive, and
             // this wait is the window they do it in -- the same shape as
             // TouchThenWait, with the reboot performed by hand instead of at
-            // 1200 baud. MEASURED on the iPad: without this, tapping Flash
-            // before the board was in BOOTSEL refused instantly with advice
-            // written for a desktop. Delta-based like every other wait; with
-            // nothing mounted the snapshot is empty and any arrival is ours.
+            // 1200 baud. This arm is reached IMMEDIATELY on such a platform --
+            // isRefusal above exempts RefuseUnidentified from the identify
+            // hold, whose port-flavoured message and 20-second silence were
+            // written for machines where a port can appear. (MEASURED on the
+            // iPad, pre-v2, before that hold existed: without this wait,
+            // tapping Flash before the board was in BOOTSEL refused instantly
+            // with advice written for a desktop.) Delta-based like every other
+            // wait; with nothing mounted the snapshot is empty and any arrival
+            // is ours.
             const WaitReporter waiting{ progress, FlashPhase::WaitingForVolume, i, n,
                                         step.cpu,
                                         std::string("waiting for the ") + cpu +
-                                        " CPU's RPI-RP2 drive -- hold the board's RED "
+                                        " CPU's RPI-RP2 drive -- hold the board's red "
                                         "button while plugging it in",
                                         kVolumeWaitMs };
             const auto arrived = waitForNewVolume(io, volumes, step.cpu, waiting);
@@ -566,7 +580,7 @@ FlashResult runFlashPlan(const FlashIo& io,
                                 "apart, so this step's image was not written.", i);
             case WaitOutcome::TimedOut:
                 return failStep(FlashOutcome::Timeout,
-                                std::string("no RPI-RP2 drive appeared. Hold the board's RED "
+                                std::string("no RPI-RP2 drive appeared. Hold the board's red "
                                 "button while plugging it in -- that is the ") + cpu +
                                 " CPU's bootloader -- then tap Flash again.", i);
             case WaitOutcome::Cancelled:

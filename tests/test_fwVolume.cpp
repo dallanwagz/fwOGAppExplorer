@@ -435,3 +435,20 @@ TEST_CASE("std::filesystem::file_size on a missing path maps to std::errc::no_su
     CHECK(ec);
     CHECK(ec == std::errc::no_such_file_or_directory);
 }
+
+TEST_CASE("vanishedOpIsCompletedFlash: a gone volume turns the failure into success") {
+    // The measured first-iPad-flash shape: the board took the image and
+    // rebooted, every subsequent operation drew EIO, and INFO_UF2.TXT was no
+    // longer reachable. The probe reports it gone -- either cleanly absent,
+    // or by erroring with the same EIO the vanished mount gives everything.
+    CHECK(detail::vanishedOpIsCompletedFlash(false, std::error_code{}));
+    CHECK(detail::vanishedOpIsCompletedFlash(
+        false, std::make_error_code(std::errc::io_error)));
+}
+
+TEST_CASE("vanishedOpIsCompletedFlash: a volume still present keeps the failure a failure") {
+    // The other direction is the load-bearing one: an EIO from a drive that
+    // is STILL mounted is a genuine write failure, and reporting it as a
+    // completed flash is the worst thing copyToVolume can do.
+    CHECK(!detail::vanishedOpIsCompletedFlash(true, std::error_code{}));
+}

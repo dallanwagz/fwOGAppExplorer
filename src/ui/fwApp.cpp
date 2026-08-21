@@ -529,9 +529,10 @@ int App::run()
         }
 #endif
         // Phone-narrow viewports get single-pane layouts and touch-sized
-        // spacing. 700 points comfortably separates every iPhone (390-440
-        // portrait, ~650-930 landscape splits either side -- landscape
-        // phones get the desktop layout, which fits) from iPad and desktop.
+        // spacing. 700 points puts every iPhone in portrait (375-440) on the
+        // compact side and iPad and desktop on the other. Landscape phones
+        // straddle it: most (~700-930) get the desktop layout, which fits;
+        // the SE/8 class at 667 stays compact.
         g_uiCompact = rootSize.x < 700.0f;
         const int compactStyleVars = g_uiCompact ? 3 : 0;
         if (g_uiCompact) {
@@ -610,7 +611,8 @@ int App::run()
         // Firmware tab losing focus (Task 22 fix round) -- see below.
         const int previousTab = lastTab;
 
-        if (ImGui::BeginTabBar("##MainTabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
+        if (ImGui::BeginTabBar("##MainTabs", g_uiCompact ? ImGuiTabBarFlags_FittingPolicyScroll
+                                                         : ImGuiTabBarFlags_None)) {
             // Consumed HERE, at the top, rather than after the loop. A request
             // can now be raised from INSIDE the loop -- the Recovery tab's "you
             // can flash that CPU now" buttons are drawn by recoveryTab.draw(),

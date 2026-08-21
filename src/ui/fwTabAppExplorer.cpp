@@ -609,9 +609,12 @@ void AppExplorerTab::draw(std::span<const CatalogEntry> entries, DeviceModel& de
     if (compact && m_compactShowDetail) {
         if (ImGui::Button(ICON_MD_ARROW_BACK " All apps")) {
             m_compactShowDetail = false;
-            // Nothing consumed a pending double-click request; drop it rather
-            // than let it fire from the list screen next frame.
-            m_flashRequestSlug.clear();
+            // Back-navigation abandons a not-yet-started flash exactly as
+            // tab-level navigation does (see onTabHidden): a flash must start
+            // in front of the person who asked for it, not from the list
+            // screen they just navigated to.
+            m_pendingFlash.reset();
+            m_flashStartError.clear();
         }
     }
 
@@ -664,7 +667,12 @@ void AppExplorerTab::draw(std::span<const CatalogEntry> entries, DeviceModel& de
     // from under a selection that is still valid, only present.
     const CatalogEntry* selected = findBySlug(entries, m_selectedSlug);
     if (!selected) {
-        ImGui::TextColored(kMutedColor, "Select an app from the list on the left.");
+        // Compact has no list on the left -- the detail screen with nothing to
+        // detail only happens when the selection vanished out of the catalog,
+        // and the way out is the back button.
+        ImGui::TextColored(kMutedColor,
+                           compact ? "This app is no longer in the catalog. Tap \"All apps\" to go back."
+                                   : "Select an app from the list on the left.");
     } else {
         // Parsed ONCE per selection, never per frame. loadUf2Summary() reads
         // the whole image and walks every 512-byte block of it; a real image

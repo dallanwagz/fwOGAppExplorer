@@ -86,10 +86,13 @@ std::string flashDisabledReasonFor(bool deviceSupportAvailable,
         const bool touchesDisplay = std::any_of(plan.begin(), plan.end(),
             [](const FlashStep& s) { return s.cpu == TargetCpu::Display; });
         if (touchesDisplay)
-            return "This install writes to the DISPLAY CPU, which cannot be "
-                   "reached from this device \xE2\x80\x94 it has no BOOTSEL button, and "
-                   "only the desktop app's serial access can reboot it into its "
-                   "bootloader. Use the desktop app for this one.";
+            // Claims only what THIS app cannot do. The DISPLAY CPU's BOOTSEL
+            // pad can still be shorted by hand -- the Recovery tab documents
+            // it -- so "only the desktop app can reboot it" would be false.
+            return "This install writes to the DISPLAY CPU, which this app "
+                   "cannot put into its bootloader -- it has no BOOTSEL button, "
+                   "and without serial access the app cannot reboot it at 1200 "
+                   "baud. Use the desktop app for this one.";
     }
     if (device == nullptr)
         return "No FreeWili is connected.";

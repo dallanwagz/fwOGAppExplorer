@@ -54,6 +54,17 @@ struct Harness {
     /// Ticks since the most recent touch before its volume appears. -1 means
     /// it never does.
     int volumeAppearsAfter = 1;
+    /// ABSOLUTE `waitTicks` value at which a volume appears with NO touch
+    /// having happened -- the serial-less arrival, where the user holding the
+    /// red button while plugging in is what raises the drive and no touch
+    /// ever occurs to anchor `volumeAppearsAfter` to. One-shot, reset to -1
+    /// when it fires, so a post-copy release wait does not see the same drive
+    /// eternally re-mounting. -1 means never.
+    int volumeAppearsAtTick = -1;
+    /// The same, for a SECOND distinct volume ("F:/") -- two boards plugged
+    /// in hand-raised, which the serial-less wait must refuse as ambiguous
+    /// exactly like the touched wait does. One-shot, like the above.
+    int secondVolumeAppearsAtTick = -1;
     /// Ticks since the most recent touch before a SECOND, distinct volume
     /// joins the first -- modelling a second board being plugged in while
     /// the engine is waiting. Only takes effect at or before
@@ -149,6 +160,17 @@ struct Harness {
         io.waitTick = [this](int) {
             ++waitTicks;
             if (cancelAfterTicks >= 0 && waitTicks >= cancelAfterTicks) return false;
+
+            if (volumeAppearsAtTick >= 0 && waitTicks >= volumeAppearsAtTick) {
+                if (std::find(volumes.begin(), volumes.end(), touchVolume) == volumes.end())
+                    volumes.push_back(touchVolume);
+                volumeAppearsAtTick = -1;
+            }
+            if (secondVolumeAppearsAtTick >= 0 && waitTicks >= secondVolumeAppearsAtTick) {
+                if (std::find(volumes.begin(), volumes.end(), "F:/") == volumes.end())
+                    volumes.push_back("F:/");
+                secondVolumeAppearsAtTick = -1;
+            }
 
             if (copyTick.has_value() && unmountAfterTicks >= 0
                 && waitTicks - *copyTick >= unmountAfterTicks) {
@@ -1746,5 +1768,112 @@ TEST_CASE("two simultaneous arrivals with no structure to tell them apart are st
     auto r = runFlashPlan(h.io(), plan, "", kNoProgress);
 
     CHECK(r.outcome == FlashOutcome::RefusedAmbiguous);
+    CHECK(h.copiedTo.empty());
+}
+
+// ---------------------------------------------------------------------------
+// The serial-less arm of RefuseUnidentified -- iPadOS, where no port exists to
+// touch and the USER raising the drive by hand is the reboot. Reachable here
+// because serial availability is a datum on FlashIo (see its comment in
+// fwFlashEngine.h) rather than a compile-time constant: every one of these
+// cases runs the exact control flow the iPad runs.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("a serial-less platform waits for a hand-raised drive instead of refusing") {
+    Harness h;   // no ports identified, nothing mounted
+    auto io = h.io();
+    io.serialSupportAvailable = false;
+    h.volumeAppearsAtTick = 3;   // the user plugs in, red button held
+
+    std::vector<FlashStep> plan{ step(TargetCpu::Main) };
+    auto r = runFlashPlan(io, plan, "", kNoProgress);
+
+    // The arrived drive still carries no identity, so the typed confirmation
+    // is the guard -- the wait must NOT write on arrival alone.
+    CHECK(r.outcome == FlashOutcome::NeedsConfirmation);
+    REQUIRE(r.confirmationCpu.has_value());
+    CHECK(*r.confirmationCpu == TargetCpu::Main);
+    CHECK(r.resumable);
+    CHECK(h.touched.empty());    // there is no port to have touched
+    CHECK(h.copiedTo.empty());
+}
+
+TEST_CASE("the typed confirmation lets a serial-less flash write the arrived drive") {
+    Harness h;
+    auto io = h.io();
+    io.serialSupportAvailable = false;
+    h.volumeAppearsAtTick = 3;
+
+    std::vector<FlashStep> plan{ step(TargetCpu::Main) };
+    auto r = runFlashPlan(io, plan, "MAIN", kNoProgress);
+
+    CHECK(r.outcome == FlashOutcome::Success);
+    CHECK(h.touched.empty());
+    REQUIRE(h.copiedTo.size() == 1);
+    CHECK(h.copiedTo[0] == Harness::kTouchVolume);
+}
+
+TEST_CASE("the serial-less wait skips the identify hold and reports the volume wait at once") {
+    // The identify hold's "waiting for the CPU to become reachable" is about a
+    // serial port; on a platform with no ports it would be twenty silent
+    // seconds in front of the one instruction that matters. The exemption in
+    // isRefusal is what this pins: the FIRST progress phase must be the volume
+    // wait carrying the red-button instruction, and WaitingForCpu must never
+    // be announced at all.
+    Harness h;
+    auto io = h.io();
+    io.serialSupportAvailable = false;
+    h.volumeAppearsAtTick = 2;
+
+    ProgressRecorder rec;
+    std::vector<FlashStep> plan{ step(TargetCpu::Main) };
+    runFlashPlan(io, plan, "MAIN", rec.fn());
+
+    CHECK(rec.of(FlashPhase::WaitingForCpu).empty());
+    const auto waits = rec.of(FlashPhase::WaitingForVolume);
+    REQUIRE_FALSE(waits.empty());
+    CHECK(waits.front().message.find("red button") != std::string::npos);
+}
+
+TEST_CASE("two hand-raised drives at once are refused as ambiguous on a serial-less platform") {
+    Harness h;
+    auto io = h.io();
+    io.serialSupportAvailable = false;
+    h.volumeAppearsAtTick = 2;
+    h.secondVolumeAppearsAtTick = 2;
+
+    std::vector<FlashStep> plan{ step(TargetCpu::Main) };
+    auto r = runFlashPlan(io, plan, "MAIN", kNoProgress);
+
+    CHECK(r.outcome == FlashOutcome::RefusedAmbiguous);
+    CHECK(h.copiedTo.empty());
+}
+
+TEST_CASE("a serial-less wait with no arrival times out with the red-button remedy") {
+    Harness h;
+    auto io = h.io();
+    io.serialSupportAvailable = false;   // nothing ever appears
+
+    std::vector<FlashStep> plan{ step(TargetCpu::Main) };
+    auto r = runFlashPlan(io, plan, "", kNoProgress);
+
+    // Timeout, not RefusedUnidentified: the desktop refusal's "no serial port
+    // to reboot" diagnosis and Recovery-tab remedy are about machinery this
+    // platform does not have. What the user can actually do is in the message.
+    CHECK(r.outcome == FlashOutcome::Timeout);
+    CHECK(r.message.find("red button") != std::string::npos);
+    CHECK(h.copiedTo.empty());
+}
+
+TEST_CASE("cancelling the serial-less wait aborts without writing") {
+    Harness h;
+    auto io = h.io();
+    io.serialSupportAvailable = false;
+    h.cancelAfterTicks = 2;
+
+    std::vector<FlashStep> plan{ step(TargetCpu::Main) };
+    auto r = runFlashPlan(io, plan, "", kNoProgress);
+
+    CHECK(r.outcome == FlashOutcome::Aborted);
     CHECK(h.copiedTo.empty());
 }

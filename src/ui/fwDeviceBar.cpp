@@ -238,7 +238,7 @@ void DeviceBar::draw(DeviceModel& model, const std::string& identificationNote,
         // been granted yet. The button opens the system folder picker; once
         // a folder is granted the scan publishes the synthetic device row
         // (fwDeviceModel.cpp) and this branch stops rendering.
-        ImGui::TextWrapped("To flash from this iPad: hold the RED button on the "
+        ImGui::TextWrapped("To flash from this iPad: hold the red button on the "
                            "board while plugging it in, then grant this app "
                            "access to the RPI-RP2 drive that appears.");
         if (ImGui::Button(ICON_MD_FOLDER_OPEN " Grant access to RPI-RP2..."))

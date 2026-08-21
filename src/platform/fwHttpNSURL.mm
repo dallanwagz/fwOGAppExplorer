@@ -59,7 +59,14 @@ std::expected<std::string, std::string> nsurlHttpGet(const std::string& url)
         // LOW_SPEED_LIMIT shape rather than the old total-cap mistake that
         // branch documents removing.
         cfg.timeoutIntervalForRequest  = 30.0;
-        cfg.timeoutIntervalForResource = 600.0;   // backstop, not the limiter
+        // timeoutIntervalForResource is a TOTAL wall-clock cap, and this
+        // function also pulls firmware images (the largest in this repo is
+        // 16,424,448 bytes), so it is sized the way the libcurl branch sizes
+        // its backstop: never the thing that fails a real download.
+        // 16,424,448 / 3600 = 4,562 B/s, i.e. the largest image still
+        // completes on any link averaging 4.5 KiB/s; the idle timeout above
+        // remains the real limiter.
+        cfg.timeoutIntervalForResource = 3600.0;
 
         FwogRedirectPolicy* policy = [FwogRedirectPolicy new];
         policy.allowPlainHttp = mayRedirectToPlainHttp(url) ? YES : NO;

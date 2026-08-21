@@ -7,6 +7,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <chrono>
 #include <mutex>
 
 static NSString* const kBookmarkKey = @"fwog.volumeGrant.bookmark";
@@ -148,9 +149,13 @@ void clearGrant()
     clearGrantCacheForNewBookmark();
 }
 
-std::string statusDescription()
+namespace {
+
+/// The uncached status computation: a defaults read, possibly a bookmark
+/// resolve, and always a reachability stat -- disk I/O, every time.
+/// Caller holds g_mutex.
+std::string statusDescriptionLocked()
 {
-    std::lock_guard lock(g_mutex);
     NSData* bm = [[NSUserDefaults standardUserDefaults] dataForKey:kBookmarkKey];
     if (!bm) return "no drive granted yet";
 
@@ -174,6 +179,28 @@ std::string statusDescription()
         return "granted; drive not currently mounted";
     }
     return std::string("granted; mounted at ") + g_activeUrl.fileSystemRepresentation;
+}
+
+} // namespace
+
+std::string statusDescription()
+{
+    // Called once per frame from fwDeviceBar's draw -- its only caller, so
+    // this runs on the UI thread alone and the cache below needs no lock of
+    // its own. The real computation is disk I/O, which does not belong on a
+    // frame, so two throttles gate it: recompute at most every 500 ms, and
+    // only when g_mutex is free. The try_to_lock is not optional -- the
+    // flash worker can hold g_mutex for the duration of a write, and a
+    // blocking lock here would freeze frames for exactly that long.
+    static std::string cached = "checking drive grant...";
+    static std::chrono::steady_clock::time_point lastRefresh{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now - lastRefresh < std::chrono::milliseconds(500)) return cached;
+    std::unique_lock lock(g_mutex, std::try_to_lock);
+    if (!lock.owns_lock()) return cached;
+    lastRefresh = now;
+    cached = statusDescriptionLocked();
+    return cached;
 }
 
 } // namespace grant

@@ -336,6 +336,12 @@ if(IOS)
     target_sources(fwog_platform PRIVATE
         src/platform/fwHttpNSURL.mm
         src/platform/fwVolumeGrant.mm)
+    # Both files are written to ARC ownership rules (autoreleased returns
+    # assigned straight to long-lived globals, e.g. fwVolumeGrant's
+    # g_activeUrl); without this flag they compile MRC, and the bookmark URL
+    # global dangles.
+    set_source_files_properties(src/platform/fwHttpNSURL.mm
+        src/platform/fwVolumeGrant.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(fwog_platform PRIVATE
         "-framework Foundation" "-framework UIKit"
         "-framework UniformTypeIdentifiers")
