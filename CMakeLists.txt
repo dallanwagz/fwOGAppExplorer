@@ -537,9 +537,15 @@ if(IOS)
         # App Store validation refuses a bundle with no asset-catalog icon
         # (CFBundleIconName + compiled AppIcon); the catalog below carries a
         # single 1024px icon Xcode derives every size from. dwarf-with-dsym so
-        # the archive has symbols to upload.
+        # the archive has symbols to upload -- and GENERATE_DEBUGGING_SYMBOLS
+        # forced on, because CMake's Release config sets it to NO, which
+        # leaves dwarf-with-dsym with no DWARF to package: the archive builds,
+        # uploads, and quietly carries no dSYM (MEASURED: build 2 uploaded
+        # with "Upload Symbols Failed" before this line existed). The shipped
+        # binary is unchanged -- the symbols are stripped into the .dSYM.
         XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon"
         XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT "dwarf-with-dsym"
+        XCODE_ATTRIBUTE_GCC_GENERATE_DEBUGGING_SYMBOLS "YES"
     )
     target_sources(fwOGAppExplorer PRIVATE packaging/ios/Assets.xcassets)
     set_source_files_properties(packaging/ios/Assets.xcassets PROPERTIES
