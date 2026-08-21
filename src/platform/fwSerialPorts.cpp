@@ -346,6 +346,10 @@ std::optional<std::string> readSerialLine(const std::string&, int) { return std:
 // zero information gained. locationID stands in for the sysfs bus id -- like
 // the bus id it names one physical port, it is never matched on, and it keeps
 // two identical boards' ids distinct.
+//
+// BOARD-VERIFIED ON MACOS 2026-08-14, against a real FreeWili 1-OG -- that
+// run predates the v2 rebase; on the rebased branch only the build and test
+// suite have been re-verified, the flash has not been re-run.
 
 namespace {
 
@@ -510,9 +514,11 @@ std::vector<SerialPortInfo> listSerialPortInfo()
 #endif   // per-platform listSerialPortInfo
 
 // One termios implementation for every POSIX platform: measured on Linux
-// against an attached board (see the branch comment above), and compiled
-// unchanged for macOS -- open(2), cfmakeraw, TIOCMBIS and B115200 are the
-// same calls there, on the /dev/cu.* callout node the mac branch lists.
+// against an attached board (see the branch comment above), and since RUN on
+// macOS too, not merely compiled -- the 1200-baud touch reset a real board
+// from a Mac on 2026-08-14, on the /dev/cu.* callout node the mac branch
+// lists. That run predates the v2 rebase; on the rebased branch only the
+// build and test suite have been re-verified, the touch has not been re-run.
 #if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 
 std::optional<std::string> readSerialLine(const std::string& port, int timeoutMs)

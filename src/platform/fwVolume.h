@@ -69,6 +69,14 @@ std::string unmountedBootselNotice(int bootselDevices, size_t volumesFound);
 /// digits, or a non-octal digit) is left untouched rather than guessed at.
 std::string unescapeMount(std::string_view s);
 
+/// The exact inverse: encode space, tab, newline and backslash the way the
+/// kernel writes them into `/proc/mounts`. Its only caller is the macOS
+/// readMounts, which renders getmntinfo()'s table into /proc/mounts's line
+/// format so the shared parser and filters need no second implementation --
+/// but it is pure string logic, so it lives here and the round trip is
+/// pinned by tests on every platform.
+std::string escapeMount(std::string_view s);
+
 /// Everything the Linux volume scan reads from the machine, in one injectable
 /// place -- the same discipline, and for the same reason, as ProbeIo
 /// (fwCpuProbe.h) and FlashIo (fwFlashEngine.h). findRpiRp2Volumes() supplies

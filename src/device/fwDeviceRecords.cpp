@@ -127,6 +127,15 @@ namespace {
 /// enumerated first would attribute one board's product string to the other.
 /// A device that publishes no serial is matched by vid/pid only if it is the
 /// ONLY match, same reasoning in a different key.
+///
+/// UNTESTED, knowingly: the choose-among-candidates rule is pure logic, but
+/// every value it decides on comes straight out of the IO registry, and a
+/// seam injected here would mock the only thing the function does. The rule
+/// is not unpinned -- the Linux sibling, detail::productFromSysfs with its
+/// injected reader, carries the tested version -- so this stays fused to
+/// IOKit and says so rather than staying silent. Board-verified on macOS
+/// 2026-08-14, pre-v2 rebase; build+tests re-verified on the rebased branch,
+/// the flash has not been re-run.
 std::string ioKitUsbProductString(uint16_t vid, uint16_t pid, const std::string& serial)
 {
     CFMutableDictionaryRef match = IOServiceMatching("IOUSBHostDevice");

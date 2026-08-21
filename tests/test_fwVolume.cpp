@@ -32,6 +32,27 @@ TEST_CASE("unescapeMount leaves a non-octal digit after the backslash alone") {
     CHECK(detail::unescapeMount("/media/foo\\099bar") == "/media/foo\\099bar");
 }
 
+TEST_CASE("escapeMount encodes exactly the characters the kernel escapes") {
+    // A path with none of the four is untouched -- most mount points.
+    CHECK(detail::escapeMount("/Volumes/RPI-RP2") == "/Volumes/RPI-RP2");
+    CHECK(detail::escapeMount("a b") == "a\\040b");
+    CHECK(detail::escapeMount("a\tb") == "a\\011b");
+    CHECK(detail::escapeMount("a\nb") == "a\\012b");
+    CHECK(detail::escapeMount("a\\b") == "a\\134b");
+}
+
+TEST_CASE("escapeMount and unescapeMount round-trip the second-volume path") {
+    // The path the macOS readMounts comment stakes its claim on: a second
+    // bootrom volume with the same label mounts at "/Volumes/RPI-RP2 1", and
+    // the space must survive the render into /proc/mounts's line format and
+    // back out of it -- truncating at the space would name the OTHER board's
+    // volume.
+    CHECK(detail::escapeMount("/Volumes/RPI-RP2 1") == "/Volumes/RPI-RP2\\0401");
+    CHECK(detail::unescapeMount(detail::escapeMount("/Volumes/RPI-RP2 1")) ==
+          "/Volumes/RPI-RP2 1");
+    CHECK(detail::unescapeMount(detail::escapeMount("a \t\n\\z")) == "a \t\n\\z");
+}
+
 // --- parseMountLine ---------------------------------------------------------
 
 TEST_CASE("parseMountLine splits the three fields it needs") {

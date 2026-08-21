@@ -56,6 +56,11 @@
 // The two-volume behaviour below was measured with loopback FAT filesystems
 // carrying the RPI-RP2 label, which is what establishes udisks2's mount-point
 // naming, but no second FreeWili was attached.
+//
+// BOARD-VERIFIED ON MACOS 2026-08-14, same board: the __APPLE__ branches below
+// (getmntinfo, F_FULLFSYNC, the DiskArbitration unmount and nobrowse remount)
+// flashed it end to end. That run predates the v2 rebase; on the rebased
+// branch only the build and test suite were re-verified, the flash was not.
 
 namespace fwog {
 
@@ -80,6 +85,22 @@ std::string unescapeMount(std::string_view s)
             i += 3;
         } else {
             out.push_back(s[i]);
+        }
+    }
+    return out;
+}
+
+std::string escapeMount(std::string_view s)
+{
+    std::string out;
+    out.reserve(s.size());
+    for (char ch : s) {
+        if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\\') {
+            const unsigned c = static_cast<unsigned char>(ch);
+            out += { '\\', char('0' + (c >> 6)), char('0' + ((c >> 3) & 7)),
+                     char('0' + (c & 7)) };
+        } else {
+            out.push_back(ch);
         }
     }
     return out;
@@ -362,12 +383,25 @@ void callback(DADiskRef, DADissenterRef dissenter, void* ctx)
     CFRunLoopStop(CFRunLoopGetCurrent());
 }
 
+/// How long to wait for one request's verdict. It bounds the writeback a
+/// request can imply. Generous on purpose: FreeWiliDisplayV67 is 16 MB and a
+/// FAT volume over full-speed USB moves ~1 MB/s, so a tight budget would turn
+/// the largest legitimate image into a spurious failure; the deadline exists
+/// only so a wedged diskarbitrationd cannot park the flash worker forever.
+constexpr CFAbsoluteTime kDaVerdictDeadlineSec = 120.0;
+
+/// Pump the scheduled run loop until the callback lands or the deadline
+/// passes. True only for an actual clean verdict -- a timeout is a failure.
+bool awaitVerdict(Result& r)
+{
+    const CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + kDaVerdictDeadlineSec;
+    while (!r.done && CFAbsoluteTimeGetCurrent() < deadline)
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1.0, true);
+    return r.done && r.ok;
+}
+
 /// Run one DiskArbitration request against the volume at `mountPoint` and
-/// wait for its verdict. The deadline bounds the writeback a request can
-/// imply. Generous on purpose: FreeWiliDisplayV67 is 16 MB and a FAT volume
-/// over full-speed USB moves ~1 MB/s, so a tight budget would turn the
-/// largest legitimate image into a spurious failure; the deadline exists only
-/// so a wedged diskarbitrationd cannot park the flash worker forever.
+/// wait for its verdict.
 template <typename Fn>
 bool request(const std::string& mountPoint, Fn&& start)
 {
@@ -385,10 +419,7 @@ bool request(const std::string& mountPoint, Fn&& start)
                                      kCFRunLoopDefaultMode);
         Result result;
         start(disk, &result);
-        const CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 120.0;
-        while (!result.done && CFAbsoluteTimeGetCurrent() < deadline)
-            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1.0, true);
-        ok = result.done && result.ok;
+        ok = awaitVerdict(result);
         DASessionUnscheduleFromRunLoop(session, CFRunLoopGetCurrent(),
                                        kCFRunLoopDefaultMode);
         CFRelease(disk);
@@ -449,16 +480,9 @@ std::optional<std::string> remountNoBrowse(const std::string& mountPoint)
     if (disk) {
         DASessionScheduleWithRunLoop(session, CFRunLoopGetCurrent(),
                                      kCFRunLoopDefaultMode);
-        const auto await = [](da::Result& r) {
-            const CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 120.0;
-            while (!r.done && CFAbsoluteTimeGetCurrent() < deadline)
-                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1.0, true);
-            return r.done && r.ok;
-        };
-
         da::Result unmounted;
         DADiskUnmount(disk, kDADiskUnmountOptionDefault, da::callback, &unmounted);
-        if (await(unmounted)) {
+        if (da::awaitVerdict(unmounted)) {
             // NULL path: diskarbitrationd picks the mount point, exactly as it
             // did for the browsable mount. The argv form is the only way to
             // pass a mount OPTION (nobrowse is not a DADiskMountOptions bit).
@@ -466,7 +490,7 @@ std::optional<std::string> remountNoBrowse(const std::string& mountPoint)
             da::Result mounted;
             DADiskMountWithArguments(disk, nullptr, kDADiskMountOptionDefault,
                                      da::callback, &mounted, args);
-            if (await(mounted)) {
+            if (da::awaitVerdict(mounted)) {
                 // Where did it land? Asked of the disk itself rather than
                 // assumed unchanged, so a diskarbitrationd that uniquifies the
                 // path cannot silently break the copy that follows.
@@ -487,7 +511,7 @@ std::optional<std::string> remountNoBrowse(const std::string& mountPoint)
                 da::Result remounted;
                 DADiskMount(disk, nullptr, kDADiskMountOptionDefault, da::callback,
                             &remounted);
-                await(remounted);
+                da::awaitVerdict(remounted);
             }
         }
         DASessionUnscheduleFromRunLoop(session, CFRunLoopGetCurrent(),
@@ -615,27 +639,14 @@ std::vector<std::string> findRpiRp2Volumes()
     // No /proc/mounts here; getmntinfo() is the same table from the kernel's
     // own hand. It is rendered into /proc/mounts's line format so that
     // detail::selectRpiRp2Volumes() -- the filters, the tests that pin them,
-    // and the octal unescaping -- stays one shared implementation. The
-    // escaping below is the exact inverse of detail::unescapeMount(): macOS
-    // mounts a SECOND volume with the same label at "/Volumes/RPI-RP2 1", and
-    // a space fed unescaped into a whitespace-split parser would truncate the
-    // mount point at "/Volumes/RPI-RP2" -- a path that names the OTHER board's
-    // volume. The fstype macOS gives a FAT volume is "msdos", which the shared
-    // filter already accepts for the manually-mounted Linux case.
+    // and the octal unescaping -- stays one shared implementation.
+    // detail::escapeMount() is the exact inverse of detail::unescapeMount():
+    // macOS mounts a SECOND volume with the same label at "/Volumes/RPI-RP2 1",
+    // and a space fed unescaped into a whitespace-split parser would truncate
+    // the mount point at "/Volumes/RPI-RP2" -- a path that names the OTHER
+    // board's volume. The fstype macOS gives a FAT volume is "msdos", which the
+    // shared filter already accepts for the manually-mounted Linux case.
     io.readMounts = [] {
-        const auto escaped = [](const char* s) {
-            std::string out;
-            for (; *s; ++s) {
-                if (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\\') {
-                    const unsigned c = static_cast<unsigned char>(*s);
-                    out += { '\\', char('0' + (c >> 6)), char('0' + ((c >> 3) & 7)),
-                             char('0' + (c & 7)) };
-                } else {
-                    out.push_back(*s);
-                }
-            }
-            return out;
-        };
         // MNT_NOWAIT: the cached table, no per-filesystem statfs round trip.
         // This runs in the flash worker's ~250ms poll loop, and a stalled
         // network mount must not be allowed to hold that loop up just to
@@ -644,9 +655,9 @@ std::vector<std::string> findRpiRp2Volumes()
         const int n = ::getmntinfo(&mounts, MNT_NOWAIT);
         std::string out;
         for (int i = 0; i < n; ++i) {
-            out += escaped(mounts[i].f_mntfromname);
+            out += detail::escapeMount(mounts[i].f_mntfromname);
             out += ' ';
-            out += escaped(mounts[i].f_mntonname);
+            out += detail::escapeMount(mounts[i].f_mntonname);
             out += ' ';
             out += mounts[i].f_fstypename;   // kernel identifier, never escaped
             out += " - 0 0\n";

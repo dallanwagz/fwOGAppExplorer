@@ -77,11 +77,16 @@
 //     anywhere else is not claimed; see that function for why it is kept
 //     regardless.
 //
-// NOT verified, and not claimed: any POSIX system that is not Linux. This
-// branch is Linux-shaped -- it reads /proc -- and elsewhere degrades straight
-// to the working-directory answer of last resort. The Windows branch is
-// untouched by this work and remains the reference; the one place that was
+// NOT verified, and not claimed: any POSIX system that is not Linux and not
+// macOS. The /proc-reading branch is Linux-shaped, and elsewhere degrades
+// straight to the working-directory answer of last resort. The Windows branch
+// is untouched by this work and remains the reference; the one place that was
 // tempting to change is flagged in tempDir().
+//
+// The macOS branch (_NSGetExecutablePath) is BOARD-VERIFIED as of 2026-08-14:
+// it ran inside the app for a real flash, so exeDir() found catalog/ and the
+// firmware on a Mac. That run predates the v2 rebase; on the rebased branch
+// only the build and test suite were re-verified.
 
 namespace fwog {
 namespace {

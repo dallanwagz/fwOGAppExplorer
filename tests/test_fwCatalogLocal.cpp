@@ -322,7 +322,7 @@ TEST_CASE("a directory that does not exist caches an empty catalog without churn
     CHECK(cache.rescans() == 1);
 }
 
-TEST_CASE("files whose names differ only in case: two images on Linux, one file on Windows") {
+TEST_CASE("files whose names differ only in case are reported exactly as the filesystem stores them") {
     auto dir = freshTestDir("case-identity");
 
 #if defined(__APPLE__)
