@@ -512,12 +512,18 @@ endif()
 # ---------------------------------------------------------------------------
 if(IOS)
     set(FWOG_IOS_DEV_TEAM "" CACHE STRING "Apple Development Team id for iOS signing")
+    # A cache variable for the same reason as the team id: App Store Connect
+    # refuses an upload whose CFBundleVersion it has already seen for this
+    # CFBundleShortVersionString, so every upload needs a higher number --
+    # which is release state, not source. `-DFWOG_IOS_BUILD_NUMBER=N` at
+    # configure time, no commit required.
+    set(FWOG_IOS_BUILD_NUMBER "1" CACHE STRING "CFBundleVersion for the iOS bundle; bump per App Store Connect upload")
     set_target_properties(fwOGAppExplorer PROPERTIES
         MACOSX_BUNDLE ON
         MACOSX_BUNDLE_BUNDLE_NAME "OG App Explorer"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.dallanwagner.fwogexplorer"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
-        MACOSX_BUNDLE_BUNDLE_VERSION "1"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${FWOG_IOS_BUILD_NUMBER}"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/packaging/ios/Info.plist.in"
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.dallanwagner.fwogexplorer"
         XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
