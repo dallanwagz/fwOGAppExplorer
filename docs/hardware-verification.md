@@ -591,3 +591,59 @@ Observations worth keeping:
   "wait for the drive that appeared" window; the wait now checks each arrival
   against the live hub-position identity and skips a drive that belongs to the
   other CPU (`waitForNewVolume`, fwFlashEngine.cpp).
+
+---
+
+## 2026-08-14 — macOS: the OgApp flash, end to end (VERIFIED, pre-v2 code)
+
+Board: the same FreeWili 1-OG, serial FW4300, attached to an arm64 Mac
+(macOS 26.6, Apple clang, `build/mac-clang-release`). This is the pass the
+macOS port's claims rest on, and it ran the one flow Linux never did:
+
+- **App Explorer `OgApp` flash, end to end, through the GUI** — the 1200-baud
+  touch on `cu.usbmodem*`, `RPI-RP2` discovered under `/Volumes`, the copy
+  with `F_FULLFSYNC`, MAIN provisioned, and the display bootloader carrying
+  the embedded DISPLAY image across the inter-CPU link — confirmed by both
+  CPUs re-enumerating with the new app's product strings.
+- Device detection and CPU identification by hub position, through IOKit.
+- Product strings read from the IO registry (fwfinder_mac leaves `_raw`
+  empty, so the registry is the only honest source on this platform).
+- The clean DiskArbitration unmount-before-write: "Disk Not Ejected
+  Properly" confirmed present before the fix and gone after it, on real
+  flashes.
+
+The session surfaced four defects, each fixed and re-verified on the board
+in the same session; the `fix(macos)` commit carries the measurements
+(interface numbers, the flush-is-the-trigger unmount finding).
+
+Not run on macOS in that pass: the display-bootloader install and
+`LegacyDirect` restore (the board's bootloader was already in place and
+wanted alive), the CPU-prober recovery flow, and two boards at once.
+
+## 2026-08-21 — macOS, rebased onto v2 (build and suite re-verified; flash NOT re-run)
+
+The macOS branch was rebased onto v2 — which rewrote flash sequencing
+(`fwFlashPrep`), added `fwogcli` as a full front-end, and made the remote
+catalog the first-launch default — all after the 2026-08-14 board pass.
+What a pass believed at the time is part of the record, so, explicitly:
+**every board-flash claim above was measured against pre-v2 code.**
+
+Re-verified on the rebased branch, this machine, 2026-08-21:
+
+- `mac-clang-release` and `mac-clang-debug` both configure, build and link
+  **warning-clean**; `ctest` green on both: **580 cases / 2337 assertions**.
+- `fwogcli` — its first macOS build ever — decodes the embedded entries
+  (`entries`) and walks the empty bus without error (`list`, no board
+  attached).
+- `packaging/make_mac_app.sh` produces a bundle that signs and passes
+  `codesign --verify` (ad-hoc in this session; the Developer ID + notarize
+  flow was proven 2026-08-14 and was not re-run).
+- A first launch from a clean slate seeds the v2 default catalog URL and
+  **fetches the remote catalog over the `dlopen`ed system libcurl**
+  (`apps-cache.json` written and listed).
+
+Not re-run against v2, because no board was attached to this machine at
+rebase time: **any flash**. The platform arms v2's `fwFlashPrep` calls into
+are byte-for-byte the ones the 2026-08-14 pass exercised, but this ledger
+records runs, not reasoning — the first post-rebase flash belongs in a new
+dated section here.
